@@ -25,4 +25,5 @@ build/
 # Local data and logs
 *.log
 data/
-
+tmp/
+storage/raw/
