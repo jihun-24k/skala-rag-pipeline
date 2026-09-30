@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Generic, TypeVar
+from typing import Callable, Generic, Protocol, TypeVar
 
 from skala_rag.models import (
     CompanyProfile,
@@ -53,17 +53,19 @@ DecisionMaker = Callable[
     [TechAssessment, MarketAssessment, FinancialAssessment, list[Evidence]],
     DecisionResult,
 ]
-ReportWriter = Callable[
-    [
-        CompanyProfile,
-        TechAssessment,
-        MarketAssessment,
-        FinancialAssessment,
-        InvestmentDecision,
-        list[Evidence],
-    ],
-    InvestmentReport,
-]
+class ReportWriter(Protocol):
+    def __call__(
+        self,
+        company_profile: CompanyProfile,
+        tech_analysis: TechAssessment,
+        market_analysis: MarketAssessment,
+        financial_analysis: FinancialAssessment,
+        decision: InvestmentDecision,
+        evidence: list[Evidence],
+        *,
+        scores: dict[str, ScoreDetail] | None = None,
+        market_category: MarketCategory | None = None,
+    ) -> InvestmentReport: ...
 
 
 @dataclass(frozen=True, slots=True)

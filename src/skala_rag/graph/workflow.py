@@ -69,6 +69,8 @@ def build_investment_graph(
             state["financial_analysis"],
             state["decision"],
             state.get("evidence", []),
+            scores=state.get("scores"),
+            market_category=state.get("market_category"),
         )
         return {"report": report}
 

@@ -56,3 +56,10 @@ result = graph.invoke(
 uv sync --group dev
 uv run pytest -q
 ```
+
+보고서 에이전트 데모 (앞 단계는 샘플 스텁, 결과는 `storage/reports/`에 저장):
+
+```bash
+uv run python scripts/run_report_demo.py            # 가짜 LLM, API 호출 없음
+uv run python scripts/run_report_demo.py --openai   # OpenAI (OPENAI_API_KEY 필요)
+```
