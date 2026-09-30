@@ -29,7 +29,7 @@ START → 시장 분류 ─┬→ 기술 분석 ───┐
 - `src/skala_rag/models/investment.py`: 에이전트별 구조화 결과 모델
 - `src/skala_rag/graph/state.py`: 공유 State와 evidence reducer
 - `src/skala_rag/agents/interfaces.py`: 6개 에이전트 호출 계약
-- `src/skala_rag/agents/tech.py`, `decision.py`: 그래프 계약에 맞춘 B·E 구현 ([사용법](docs/b-e-nodes.md))
+- `src/skala_rag/agents/tech_agents/tech.py`, `src/skala_rag/agents/decision_agents/decision.py`: 그래프 계약에 맞춘 B·E 구현 ([사용법](docs/b-e-nodes.md))
 - `src/skala_rag/graph/workflow.py`: 그래프 노드와 edge 정의
 
 B·E 구현은 기존 `InvestmentAgents`에 주입할 수 있습니다. `to_storage_payload(result)`는 그래프 결과를 JSON 호환 자료로 변환하며 DB에 직접 저장하지 않습니다. 그래프 연결과 변환 검사는 `uv run pytest -q`로 확인합니다.

@@ -10,8 +10,8 @@ B·E는 기존 LangGraph의 `InvestmentAgents` 계약을 그대로 사용합니�
 ```python
 from functools import partial
 
-from skala_rag.agents.decision import decision_node
-from skala_rag.agents.tech import load_faiss_search, technology_node
+from skala_rag.agents.decision_agents.decision import decision_node
+from skala_rag.agents.tech_agents.tech import load_faiss_search, technology_node
 
 # 나머지 네 에이전트 구현과 함께 InvestmentAgents에 전달합니다.
 search_evidence = load_faiss_search(

@@ -7,8 +7,8 @@ from functools import partial
 import pytest
 
 from skala_rag.agents import AnalysisResult, ClassificationResult, InvestmentAgents
-from skala_rag.agents.decision import CRITERIA, decision_node
-from skala_rag.agents.tech import load_faiss_search, technology_node
+from skala_rag.agents.decision_agents.decision import CRITERIA, decision_node
+from skala_rag.agents.tech_agents.tech import load_faiss_search, technology_node
 from skala_rag.graph import build_investment_graph, to_storage_payload
 from skala_rag.models import (
     CompanyProfile, Evidence, FinancialAssessment, InvestmentReport,
