@@ -62,6 +62,28 @@ uv sync --group dev
 uv run pytest -q
 ```
 
-A 에이전트의 입력·출력, 신규 기업 조사 경로와 실제 10개사 자료 연결 방법은 [시장분류 에이전트 안내](src/skala_rag/agents/market_classification/README.md)에 정리했습니다. 현재 기업 마스터는 `../자료조사/data/company_master.json`에 있으며, 다른 위치에서 실행할 때는 `SKALA_RESEARCH_ROOT`를 설정합니다.
+## 자료 임베딩과 FAISS 검색
 
-C의 실행 방법, 모델 연결, 산업 공통 자료 입력 양식은 [시장·경쟁 에이전트 안내](src/skala_rag/agents/market_competition/README.md)에 정리했습니다. 기본 실행은 로컬 자료 검색이며, 구조화 생성 모델을 주입하면 인용을 포함한 분석 초안을 반환합니다.
+Qwen3-Embedding-0.6B으로 Markdown, JSON, JSONL, PDF 자료를 임베딩하고
+FAISS `IndexIDMap2(IndexFlatIP)`와 SQLite 메타데이터를 함께 생성합니다.
+
+```bash
+HF_HOME=storage/models uv run skala-rag index build \
+  --source storage/raw/자료조사 \
+  --output storage/indexes/qwen3-0.6b-v1 \
+  --version qwen3-0.6b-v1 \
+  --device auto
+```
+
+검색 예시:
+
+```bash
+HF_HOME=storage/models uv run skala-rag index search \
+  --index storage/indexes/qwen3-0.6b-v1 \
+  --query "로브로스의 핵심 로봇 기술과 특허" \
+  --company-id company-01 \
+  --top-k 5
+```
+
+색인은 `evidence.faiss`, `metadata.sqlite3`, `manifest.json`으로 구성됩니다.
+manifest에는 임베딩 모델·차원·청크 수와 인덱스 파일 체크섬이 기록됩니다.
