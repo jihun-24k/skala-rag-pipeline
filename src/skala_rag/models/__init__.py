@@ -12,6 +12,7 @@ from skala_rag.models.investment import (
     MarketAssessment,
     MarketCategory,
     MissingFact,
+    RagEvaluation,
     ScoreDetail,
     TechAssessment,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "MarketAssessment",
     "MarketCategory",
     "MissingFact",
+    "RagEvaluation",
     "ScoreDetail",
     "TechAssessment",
 ]
