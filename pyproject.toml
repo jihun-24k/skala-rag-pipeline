@@ -28,6 +28,9 @@ dev = [
   "pytest>=8.3,<10.0",
 ]
 
+[project.optional-dependencies]
+market-llm = ["langchain>=1.0,<2.0"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/skala_rag"]
 

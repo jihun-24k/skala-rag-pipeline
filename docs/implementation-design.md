@@ -516,7 +516,7 @@ skala-rag-pipeline/
 - `PDFRetrievalChain`은 `source_uri`를 문자열로 받지만 `load_documents`는 리스트를 순회한다. 그대로 실행하면 문자열의 각 문자를 파일 경로로 처리할 수 있다.
 - `PDFRetrievalChain.__init__`이 `super().__init__(**kwargs)`를 호출하지만 부모 생성자는 인자를 받지 않는다.
 - 확장자 없는 PDF는 PDF가 맞아도 거부한다. MIME type과 magic bytes로 판별해야 한다.
-- FAISS의 `allow_dangerous_deserialization=True`는 신뢰되지 않은 인덱스에 사용하면 안 된다.
+- FAISS 인덱스 파일은 신뢰된 로컬 산출물만 `read_index`로 읽는다.
 - `format_docs`는 모든 문서에 `source`, `page`가 있다고 가정한다. 문서 유형별 locator 모델이 필요하다.
 - 단순 similarity top-k는 제품명·특허번호·정확한 수치 검색과 반대 증거 균형을 보장하지 않는다.
 - notebook 예제의 수동 JSON parsing 대신 Pydantic structured output을 사용해야 한다.
@@ -599,8 +599,8 @@ skala-rag-pipeline/
 첫 수직 슬라이스는 기업 하나와 질문 하나를 끝까지 통과시키는 것이다.
 
 1. 로브로스의 승인 문서 12~20개를 manifest로 등록한다.
-2. 원문 → evidence claim → SQLite/BM25/FAISS 색인을 완성한다.
-3. SQLite 재무 repository와 `available/unavailable` 게이트를 먼저 구현한다.
+2. 원문 → evidence claim → FAISS 인덱스·PostgreSQL 저장을 완성한다.
+3. 기술 에이전트 하나만 먼저 구현한다.
 4. 근거 ID가 포함된 기술 평가 결과를 만든다.
 5. 시장 에이전트를 추가하고 기술·시장 노드를 병렬 연결한다.
 6. 원 보고서의 1~5점 채점과 우선순위 판정 규칙을 구현한다.

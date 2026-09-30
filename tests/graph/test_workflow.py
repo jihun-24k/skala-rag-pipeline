@@ -148,6 +148,7 @@ def test_graph_has_expected_six_agent_nodes() -> None:
     assert set(graph.get_graph().nodes) == {
         "__start__",
         "classify_market",
+        "classification_review",
         "analyze_technology",
         "analyze_market",
         "analyze_financials",
