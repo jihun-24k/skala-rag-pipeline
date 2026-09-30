@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run real A–F analysis and export JSON/Markdown; accepts `analyze` CLI flags."""
+"""Run real A–F analysis and export PDF/JSON/Markdown; accepts `analyze` CLI flags."""
 from pathlib import Path
 import sys
 
