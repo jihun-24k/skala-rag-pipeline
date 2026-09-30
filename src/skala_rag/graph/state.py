@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from skala_rag.models import (
     CompanyProfile,
@@ -51,7 +51,7 @@ class InvestmentState(InvestmentInput, total=False):
     report: InvestmentReport
 
 class InvestmentOutput(TypedDict):
-    current_company: dict[str, object]
+    current_company: NotRequired[dict[str, object]]
     company_profile: CompanyProfile
     market_category: MarketCategory
     tech_analysis: TechAssessment

@@ -5,11 +5,11 @@ import zipfile
 
 import httpx
 
-from financial_agent.api.dart import DartClient
-from financial_agent.api.fsc import FscClient
-from financial_agent.api.kind import KindClient
-from financial_agent.models.schemas import ApiStatus, CompanyRef
-from financial_agent.service.normalizer import FinancialNormalizer
+from skala_rag.agents.financial_agent.api.dart import DartClient
+from skala_rag.agents.financial_agent.api.fsc import FscClient
+from skala_rag.agents.financial_agent.api.kind import KindClient
+from skala_rag.agents.financial_agent.models.schemas import ApiStatus, CompanyRef
+from skala_rag.agents.financial_agent.service.normalizer import FinancialNormalizer
 
 
 def _corp_code_zip() -> bytes:

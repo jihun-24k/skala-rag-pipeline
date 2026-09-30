@@ -28,6 +28,9 @@ build/
 data/
 tmp/
 storage/raw/
+storage/models/
+storage/indexes/
+storage/db/
 
 # Generated reports
 storage/reports/

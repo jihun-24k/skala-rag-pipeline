@@ -92,6 +92,13 @@ def test_build_save_load_and_filtered_search(tmp_path: Path) -> None:
     assert hits[0].company_name == "로봇회사"
     assert "battery" in hits[0].text
 
+    # Path-based metadata joins must filter before applying top_k, even when
+    # the requested candidate pool is smaller than the complete index.
+    selected = retriever.search(RetrievalQuery(query='battery safety certification',
+        source_paths=['02_다른회사/D_언론_시장_데모/market.md'], top_k=1, fetch_k=1))
+    assert len(selected) == 1
+    assert selected[0].company_id == 'company-02'
+
 
 def test_retriever_rejects_tampered_index(tmp_path: Path) -> None:
     source = tmp_path / "source"

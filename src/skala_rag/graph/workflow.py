@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from inspect import Parameter, signature
 
 from langgraph.graph import END, START, StateGraph
 
@@ -114,6 +115,10 @@ def build_investment_graph(
         return {"decision": result.decision, "scores": result.scores}
 
     def write_report(state: InvestmentState) -> dict[str, object]:
+        parameters = signature(agents.write_report).parameters
+        accepts_kwargs = any(p.kind == Parameter.VAR_KEYWORD for p in parameters.values())
+        extras = {key: state.get(key) for key in ("scores", "market_category")
+                  if accepts_kwargs or key in parameters}
         report = agents.write_report(
             state["company_profile"],
             state["tech_analysis"],
@@ -121,8 +126,7 @@ def build_investment_graph(
             state["financial_analysis"],
             state["decision"],
             state.get("evidence", []),
-            scores=state.get("scores"),
-            market_category=state.get("market_category"),
+            **extras,
         )
         return {"report": report}
 

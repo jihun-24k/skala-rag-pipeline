@@ -88,3 +88,43 @@ uv run python scripts/example_robros.py --no-pdf        # Markdown만
 uv pip install markdown pypdf playwright && uv run playwright install chromium
 uv run python scripts/example_robros.py                 # PDF 변환 + 페이지 수 확인
 ```
+# 실제 분석 및 보고서 실행
+
+```bash
+uv sync
+# 로컬 Qwen 모델과 FAISS로 검색하고 근거·결측값을 보고서로 저장
+HF_HOME=storage/models uv run skala-rag analyze \
+  --query "로브로스 투자 분석" --as-of-date 2026-09-30
+
+# 모델 다운로드 없이 BM25로 자료·그래프 연결 확인
+uv run skala-rag analyze --query "로브로스 분석" --retriever bm25
+
+# 같은 실행을 스크립트로 수행
+HF_HOME=storage/models uv run python scripts/generate_report.py \
+  --query "로브로스 분석" --as-of-date 2026-09-30
+
+# 저장된 JSON으로 Markdown을 다시 생성
+uv run skala-rag report --input storage/reports/<run-id>/01_robros.json \
+  --output storage/reports/report.md
+```
+
+출력은 `storage/reports/<run-id>/` 아래의 기업별 JSON, Markdown, `summary.json`이다.
+`--company 로브로스 --company 다른기업`처럼 반복하면 기업마다 독립된 State로 분석한다.
+자료 위치는 `--research-root` 또는 `SKALA_RESEARCH_ROOT`로 지정할 수 있다.
+FAISS는 기본적으로 `storage/indexes/qwen3-0.6b-v1`을 사용하며 `--index`로 바꾼다.
+
+기본 실행은 LLM과 재무 API를 사용하지 않으며 검색 근거·결측 정보를 출력하고
+투자 점수 없이 `추가 실사`로 반환한다. 실제 생성·채점을 사용하려면 `uv sync --extra llm`을
+실행하고 `OPENAI_API_KEY`와 `--model <사용할 모델명>`을 설정한다.
+재무 수집은 `--financial-api`로 활성화한다. DART/FSC는 해당 키를 환경 또는 `.env`에서
+읽으며 KIND는 공개 웹 조회를 사용한다. API/LLM 오류는 성공한 분석으로 감추지 않는다.
+재무 어댑터의 기준일 검사는 재무 기간 기준이며 역사적 공시 발표 시점 검증은 별도 과제다.
+
+`runtime.build_runtime_agents()`의 `technology_retriever`, `market_retriever`에 서로 다른
+리트리버를 주입할 수 있다. 공통 FAISS 검색 계약은 `EvidenceRetriever.search(RetrievalQuery)`이며,
+에이전트 어댑터는 원문 URL·자료 관측일·기업 식별자를 검증한 메타데이터와 조인한다.
+기존 인덱스에 없거나 원문 메타데이터와 매칭되지 않는 자료는 제외한다.
+FAISS 인덱스에 새 산업 공통 자료를 추가했다면 메타데이터의 `locator`도 해당 파일 경로로 지정한다.
+
+검증: `uv run pytest -q` (재무 에이전트 테스트 포함).
+`scripts/run_langgraph.py`는 고정값을 사용하는 그래프 데모이며 실제 실행은 위 명령을 사용한다.

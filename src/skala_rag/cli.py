@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date
 from pathlib import Path
 
 from skala_rag.ingestion import (
@@ -72,9 +73,88 @@ def _search_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _report_command(args: argparse.Namespace) -> int:
+    from skala_rag.models import InvestmentReport
+    from skala_rag.agents.report import render_markdown
+    payload = json.loads(args.input.read_text(encoding='utf-8'))
+    report = InvestmentReport.model_validate(payload['report'])
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(render_markdown(report), encoding='utf-8')
+    print(args.output)
+    return 0
+
+
+def _analyze_command(args: argparse.Namespace) -> int:
+    from skala_rag.runtime import build_runtime_agents
+    from skala_rag.graph import build_investment_graph, to_storage_payload
+    from skala_rag.agents.report import render_markdown
+    from skala_rag.agents.financial_agent.adapter import unavailable_financials
+    import re
+    import uuid
+
+    model = None
+    if args.model:
+        from langchain_openai import ChatOpenAI
+        model = ChatOpenAI(model=args.model, temperature=0)
+    retriever = None
+    if args.retriever == 'faiss':
+        if not (args.index / 'manifest.json').is_file():
+            raise FileNotFoundError(f'FAISS index not found: {args.index}; run index build first')
+        embedder = QwenEmbeddingProvider(device=_device(args.device), batch_size=1)
+        retriever = FaissEvidenceRetriever(args.index, embedder)
+    financial = None
+    if not args.financial_api:
+        financial = unavailable_financials
+    agents = build_runtime_agents(research_root=args.research_root, retriever=retriever,
+        index_count=retriever.manifest.chunk_count if retriever else 100,
+        financial_analyzer=financial, model=model)
+    graph = build_investment_graph(agents)
+    run_dir = args.output / uuid.uuid4().hex[:12]
+    run_dir.mkdir(parents=True, exist_ok=False)
+    evaluated = []
+    for index, company in enumerate(args.company or [None]):
+        state = {'query': args.query, 'as_of_date': args.as_of_date.isoformat()}
+        if company:
+            state['candidate_companies'] = [{'company_name': company}]
+        # Each invocation starts fresh; evidence from one candidate cannot leak.
+        result = graph.invoke(state)
+        payload = to_storage_payload(result)
+        payload['execution'] = {'retriever': args.retriever, 'model': args.model,
+            'financial_api': args.financial_api,
+            'index_version': retriever.manifest.index_version if retriever else None}
+        name = re.sub(r'[^\w.-]', '_', result['company_profile'].company_id)
+        stem = run_dir / f'{index + 1:02d}_{name}'
+        stem.with_suffix('.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        stem.with_suffix('.md').write_text(render_markdown(result['report']), encoding='utf-8')
+        evaluated.append({'company': result['company_profile'].company_name,
+                          'decision': result['decision'].decision,
+                          'json': stem.with_suffix('.json').name,
+                          'report': stem.with_suffix('.md').name})
+        print(f"{evaluated[-1]['company']}: {evaluated[-1]['decision']} → {stem.with_suffix('.md')}")
+    (run_dir / 'summary.json').write_text(json.dumps(evaluated, ensure_ascii=False, indent=2), encoding='utf-8')
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skala-rag")
     commands = parser.add_subparsers(dest="command", required=True)
+    analyze = commands.add_parser('analyze', help='Run A–F and save JSON plus Markdown reports')
+    analyze.add_argument('--query', required=True)
+    analyze.add_argument('--company', action='append', default=[], help='Candidate company name; repeat for a batch')
+    analyze.add_argument('--as-of-date', type=date.fromisoformat, default=date.today())
+    analyze.add_argument('--research-root', type=Path)
+    analyze.add_argument('--retriever', choices=['faiss', 'bm25'], default='faiss')
+    analyze.add_argument('--index', type=Path, default=Path('storage/indexes/qwen3-0.6b-v1'))
+    analyze.add_argument('--device', default='cpu', choices=['auto', 'cpu', 'mps', 'cuda'])
+    analyze.add_argument('--model', help='Optional LangChain OpenAI model name for generation and scoring')
+    analyze.add_argument('--financial-api', action='store_true', help='Use configured DART/FSC/KIND credentials')
+    analyze.add_argument('--output', type=Path, default=Path('storage/reports'))
+    analyze.set_defaults(handler=_analyze_command)
+
+    report = commands.add_parser('report', help='Render a saved analysis JSON to Markdown')
+    report.add_argument('--input', type=Path, required=True)
+    report.add_argument('--output', type=Path, required=True)
+    report.set_defaults(handler=_report_command)
     index = commands.add_parser("index", help="Build or query a local FAISS index")
     index_commands = index.add_subparsers(dest="index_command", required=True)
 
@@ -104,7 +184,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except (ValueError, FileNotFoundError, ImportError) as exc:
+        import sys
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
