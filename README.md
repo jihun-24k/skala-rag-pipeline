@@ -62,6 +62,29 @@ uv sync --group dev
 uv run pytest -q
 ```
 
-A 에이전트의 입력·출력, 신규 기업 조사 경로와 실제 10개사 자료 연결 방법은 [시장분류 에이전트 안내](src/skala_rag/agents/market_classification/README.md)에 정리했습니다. 현재 기업 마스터는 `../자료조사/data/company_master.json`에 있으며, 다른 위치에서 실행할 때는 `SKALA_RESEARCH_ROOT`를 설정합니다.
+## 보고서 생성 에이전트
 
-C의 실행 방법, 모델 연결, 산업 공통 자료 입력 양식은 [시장·경쟁 에이전트 안내](src/skala_rag/agents/market_competition/README.md)에 정리했습니다. 기본 실행은 로컬 자료 검색이며, 구조화 생성 모델을 주입하면 인용을 포함한 분석 초안을 반환합니다.
+`src/skala_rag/agents/report.py`의 `make_report_writer()`가 `InvestmentAgents.write_report` 계약(`ReportWriter`)을 구현합니다. 분석 결과·투자 판단·evidence만 사용하고 새 자료를 검색하지 않으며, 판단을 바꾸지 않습니다.
+
+```python
+from langchain_openai import ChatOpenAI
+from skala_rag.agents.report import make_report_writer, render_markdown
+
+write_report = make_report_writer(ChatOpenAI(model="gpt-4o-mini", temperature=0), output_dir="storage/reports")
+agents = InvestmentAgents(..., write_report=write_report)
+report = build_investment_graph(agents).invoke({...})["report"]
+print(render_markdown(report))
+```
+
+- 설계서 8장 구조(SUMMARY → … → REFERENCE, 5페이지)를 `InvestmentReport`의 6개 필드에 나눠 담습니다.
+- 모든 문장에 evidence ID를 구조화 출력으로 받고, 근거 없는 주장은 1회 재작성 후 제외합니다. 이어서 인용 근거가 문장의 수치·조건을 실제로 뒷받침하는지 한 번 더 검사합니다(Self-RAG식 검증).
+- 본문은 `[n]`, `references`는 실제 인용한 자료만 첫 등장 순서로 싣습니다. E 등급은 로드맵으로만 표기하고, `MissingFact`는 "확인 불가 항목" 표로 노출합니다.
+- 그래프가 넘겨줄 수 있으면 `scores`, `market_category`를 키워드 인자로 받아 점수표와 스냅샷을 채웁니다.
+
+예시 실행(API 키 불필요, 로브로스 예시 데이터):
+
+```bash
+uv run python scripts/example_robros.py --no-pdf        # Markdown만
+uv pip install markdown pypdf playwright && uv run playwright install chromium
+uv run python scripts/example_robros.py                 # PDF 변환 + 페이지 수 확인
+```
