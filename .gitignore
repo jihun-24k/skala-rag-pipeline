@@ -11,6 +11,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.uv-cache/
 
 # Node.js
 node_modules/
