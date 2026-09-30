@@ -1,11 +1,14 @@
 version = 1
 revision = 3
 requires-python = ">=3.11"
+<<<<<<< HEAD
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
     "python_full_version >= '3.12' and sys_platform != 'emscripten'",
     "python_full_version < '3.12'",
 ]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 
 [[package]]
 name = "annotated-types"
@@ -39,6 +42,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "charset-normalizer"
 version = "3.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -186,6 +190,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -195,6 +201,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -230,6 +237,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -252,6 +261,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "httpcore2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
@@ -265,6 +275,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 name = "httpx"
 version = "0.28.1"
 source = { registry = "https://pypi.org/simple" }
@@ -280,6 +292,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "httpx2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
@@ -306,6 +319,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 name = "idna"
 version = "3.20"
 source = { registry = "https://pypi.org/simple" }
@@ -324,6 +339,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "jsonpatch"
 version = "1.33"
 source = { registry = "https://pypi.org/simple" }
@@ -746,6 +762,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -881,6 +899,23 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
+=======
+name = "pydantic-settings"
+version = "2.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/68/ca/31c57507b13119d7d3cfa1576dad2911a4861e3be07b579395f4e9d393f9/pydantic_settings-2.15.0.tar.gz", hash = "sha256:694b793e84f766ba76a90ebdefc01d0a9a045dab0382bee70393da93712ad117", size = 261253, upload-time = "2026-08-07T09:24:57.419Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/a4/2bffa9f8e804325a09867f0e9d30795c80ea9f8d62560bd1b6ad6220eb2f/pydantic_settings-2.15.0-py3-none-any.whl", hash = "sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42", size = 69413, upload-time = "2026-08-07T09:24:55.839Z" },
+]
+
+[[package]]
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 name = "pygments"
 version = "2.21.0"
 source = { registry = "https://pypi.org/simple" }
@@ -891,7 +926,11 @@ wheels = [
 
 [[package]]
 name = "pytest"
+<<<<<<< HEAD
 version = "9.1.1"
+=======
+version = "8.4.2"
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -900,6 +939,7 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
+<<<<<<< HEAD
 sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
@@ -985,6 +1025,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f3/61/d7545dafb7ac2230c70d38d31cbfe4cc64f7144dc41f6e4e4b78ecd9f5bb/requests-toolbelt-1.0.0.tar.gz", hash = "sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6", size = 206888, upload-time = "2023-05-01T04:11:33.229Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl", hash = "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06", size = 54481, upload-time = "2023-05-01T04:11:28.427Z" },
+=======
+sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
+]
+
+[[package]]
+name = "python-dotenv"
+version = "1.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/53/ed9d74092561d4b01a2ef1349d52cdbc135e526c245f366b089cfca6de49/python_dotenv-1.2.3.tar.gz", hash = "sha256:a20a594dabeaa385725aa239d5244871c143ecb356add8a20fcf23773a6c3a35", size = 58945, upload-time = "2026-08-16T16:54:54.067Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/17/c5c6b53ddc18f297992099b3d9ec16c855c0ccc83263a21fe4d1c625ec6c/python_dotenv-1.2.3-py3-none-any.whl", hash = "sha256:904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9", size = 22780, upload-time = "2026-08-16T16:54:52.473Z" },
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 ]
 
 [[package]]
@@ -992,6 +1046,7 @@ name = "skala-rag-pipeline"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+<<<<<<< HEAD
     { name = "faiss-cpu" },
     { name = "langgraph" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1006,12 +1061,21 @@ market-llm = [
 ]
 
 [package.dev-dependencies]
+=======
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.optional-dependencies]
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 dev = [
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
+<<<<<<< HEAD
     { name = "langchain", marker = "extra == 'market-llm'", specifier = ">=1.0,<2.0" },
     { name = "langgraph", specifier = ">=1.0,<2.0" },
     { name = "numpy", specifier = ">=1.26,<3.0" },
@@ -1049,6 +1113,14 @@ sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e81
 wheels = [
     { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
 ]
+=======
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "pydantic", specifier = ">=2.7,<3" },
+    { name = "pydantic-settings", specifier = ">=2.2,<3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },
+]
+provides-extras = ["dev"]
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
 
 [[package]]
 name = "typing-extensions"
@@ -1070,6 +1142,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/a3/26/b09b8010994eccc3c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", hash = "sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", size = 14750, upload-time = "2026-08-12T12:37:24.648Z" },
 ]
+<<<<<<< HEAD
 
 [[package]]
 name = "urllib3"
@@ -1511,3 +1584,5 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/43/241f9615bcf8ba8903b3f0432da069e857fc4fd1783bd26183db53c4804b/zstandard-0.25.0-cp314-cp314-win_amd64.whl", hash = "sha256:c19bcdd826e95671065f8692b5a4aa95c52dc7a02a4c5a0cac46deb879a017a2", size = 516118, upload-time = "2025-09-14T22:18:17.849Z" },
     { url = "https://files.pythonhosted.org/packages/f0/ef/da163ce2450ed4febf6467d77ccb4cd52c4c30ab45624bad26ca0a27260c/zstandard-0.25.0-cp314-cp314-win_arm64.whl", hash = "sha256:d7541afd73985c630bafcd6338d2518ae96060075f9463d7dc14cfb33514383d", size = 476940, upload-time = "2025-09-14T22:18:19.088Z" },
 ]
+=======
+>>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)

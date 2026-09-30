@@ -5,28 +5,20 @@ build-backend = "hatchling.build"
 [project]
 name = "skala-rag-pipeline"
 version = "0.1.0"
-description = "Evidence-grounded Physical AI investment analysis workflow"
-readme = "README.md"
+description = "Evidence-traceable RAG pipeline for Physical AI investment review"
 requires-python = ">=3.11"
 dependencies = [
-  "faiss-cpu>=1.8,<2.0",
-  "langgraph>=1.0,<2.0",
-  "numpy>=1.26,<3.0",
-  "pydantic>=2.9,<3.0",
-  "typing-extensions>=4.12",
-]
-
-[dependency-groups]
-dev = [
-  "pytest>=8.3,<10.0",
+  "httpx>=0.28,<1",
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.2,<3",
 ]
 
 [project.optional-dependencies]
-market-llm = ["langchain>=1.0,<2.0"]
+dev = ["pytest>=8,<9"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/skala_rag"]
+packages = ["financial_agent"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+testpaths = ["financial_agent/tests"]
+addopts = "-q"
