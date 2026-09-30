@@ -38,6 +38,12 @@ class CompanyProfile(DomainModel):
     physical_ai_type: str
     stage: str
     as_of_date: date
+    listing_status: str | None = None
+    business_model: str | None = None
+    classification_status: str = "unverified"
+    supply_roles: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class MarketCategory(DomainModel):
@@ -46,6 +52,9 @@ class MarketCategory(DomainModel):
     target_market: list[str] = Field(default_factory=list)
     customer_type: list[str] = Field(default_factory=list)
     analysis_scope: list[str] = Field(default_factory=list)
+    secondary_forms: list[str] = Field(default_factory=list)
+    priority_metrics: list[str] = Field(default_factory=list)
+    review_required: bool = False
 
 
 class TechAssessment(DomainModel):
@@ -60,7 +69,28 @@ class TechAssessment(DomainModel):
     missing_facts: list[MissingFact] = Field(default_factory=list)
 
 
+class MarketFinding(DomainModel):
+    topic: str
+    text: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class CompetitorComparison(DomainModel):
+    competitor_name: str
+    comparison: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class CompetitorAnalysis(DomainModel):
+    comparisons: list[CompetitorComparison] = Field(default_factory=list)
+    missing_facts: list[MissingFact] = Field(default_factory=list)
+
+
 class MarketAssessment(DomainModel):
+    analysis_status: str = "unverified"
+    market_definition: list[str] = Field(default_factory=list)
+    outlook: list[str] = Field(default_factory=list)
+    findings: list[MarketFinding] = Field(default_factory=list)
     tam: str | None = None
     sam: str | None = None
     som: str | None = None
@@ -97,7 +127,7 @@ class ScoreDetail(DomainModel):
 
 class InvestmentDecision(DomainModel):
     decision: Literal["투자", "조건부 투자", "추가 실사", "투자 제외"]
-    total_score: float = Field(ge=0.0, le=100.0)
+    total_score: float | None = Field(default=None, ge=0.0, le=100.0)
     confidence: float = Field(ge=0.0, le=1.0)
     investment_reasons: list[str] = Field(default_factory=list)
     counter_arguments: list[str] = Field(default_factory=list)

@@ -24,6 +24,7 @@ AssessmentT = TypeVar("AssessmentT")
 class ClassificationResult:
     company_profile: CompanyProfile
     market_category: MarketCategory
+    current_company: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

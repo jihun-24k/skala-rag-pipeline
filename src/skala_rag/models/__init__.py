@@ -2,6 +2,9 @@
 
 from skala_rag.models.investment import (
     CompanyProfile,
+    CompetitorAnalysis,
+    CompetitorComparison,
+    MarketFinding,
     Evidence,
     FinancialAssessment,
     InvestmentDecision,
@@ -15,6 +18,9 @@ from skala_rag.models.investment import (
 
 __all__ = [
     "CompanyProfile",
+    "CompetitorAnalysis",
+    "CompetitorComparison",
+    "MarketFinding",
     "Evidence",
     "FinancialAssessment",
     "InvestmentDecision",

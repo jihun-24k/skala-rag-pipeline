@@ -8,6 +8,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from skala_rag.models import (
     CompanyProfile,
+    CompetitorAnalysis,
     Evidence,
     FinancialAssessment,
     InvestmentDecision,
@@ -29,15 +30,19 @@ def merge_evidence(current: list[Evidence], update: list[Evidence]) -> list[Evid
 
 
 class InvestmentInput(TypedDict):
-    query: str
+    query: NotRequired[str]
     as_of_date: str
+    candidate_companies: NotRequired[list[str | dict[str, object]]]
+    current_index: NotRequired[int]
 
 
 class InvestmentState(InvestmentInput, total=False):
+    current_company: dict[str, object]
     company_profile: CompanyProfile
     market_category: MarketCategory
     tech_analysis: TechAssessment
     market_analysis: MarketAssessment
+    competitor_analysis: CompetitorAnalysis
     financial_analysis: FinancialAssessment
     evidence: Annotated[list[Evidence], merge_evidence]
     decision: InvestmentDecision
@@ -45,10 +50,12 @@ class InvestmentState(InvestmentInput, total=False):
     report: InvestmentReport
 
 class InvestmentOutput(TypedDict):
+    current_company: dict[str, object]
     company_profile: CompanyProfile
     market_category: MarketCategory
     tech_analysis: TechAssessment
     market_analysis: MarketAssessment
+    competitor_analysis: CompetitorAnalysis
     financial_analysis: FinancialAssessment
     evidence: list[Evidence]
     decision: InvestmentDecision

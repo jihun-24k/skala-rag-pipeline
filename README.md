@@ -20,6 +20,7 @@ START → 시장 분류 ─┬→ 기술 분석 ───┐
 ```
 
 - 기술 분석과 시장·경쟁 분석은 같은 super-step에서 병렬 실행됩니다.
+- 분류 결과가 `review_required`이거나 형태 미확정이면 평가 에이전트를 건너뛰고 `추가 실사` 보고서를 반환합니다.
 - 재무 분석은 두 분석이 모두 끝날 때까지 기다립니다.
 - 각 분석 노드가 추가한 `evidence`는 `evidence_id` 기준으로 병합됩니다.
 - 구체적인 LLM, 검색기, 데이터 저장소는 `InvestmentAgents`로 주입합니다.
@@ -29,6 +30,8 @@ START → 시장 분류 ─┬→ 기술 분석 ───┐
 - `src/skala_rag/models/investment.py`: 에이전트별 구조화 결과 모델
 - `src/skala_rag/graph/state.py`: 공유 State와 evidence reducer
 - `src/skala_rag/agents/interfaces.py`: 6개 에이전트 호출 계약
+- `src/skala_rag/agents/market_classification/`: A 접수·시장분류 구현과 기업 마스터 어댑터
+- `src/skala_rag/agents/market_competition/`: C 시장·경쟁 RAG, 출처 검증과 산업 공통 자료 검색
 - `src/skala_rag/graph/workflow.py`: 그래프 노드와 edge 정의
 
 ```python
@@ -56,3 +59,7 @@ result = graph.invoke(
 uv sync --group dev
 uv run pytest -q
 ```
+
+A 에이전트의 입력·출력, 신규 기업 조사 경로와 실제 10개사 자료 연결 방법은 [시장분류 에이전트 안내](src/skala_rag/agents/market_classification/README.md)에 정리했습니다. 현재 기업 마스터는 `../자료조사/data/company_master.json`에 있으며, 다른 위치에서 실행할 때는 `SKALA_RESEARCH_ROOT`를 설정합니다.
+
+C의 실행 방법, 모델 연결, 산업 공통 자료 입력 양식은 [시장·경쟁 에이전트 안내](src/skala_rag/agents/market_competition/README.md)에 정리했습니다. 기본 실행은 로컬 자료 검색이며, 구조화 생성 모델을 주입하면 인용을 포함한 분석 초안을 반환합니다.
