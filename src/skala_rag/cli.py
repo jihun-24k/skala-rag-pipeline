@@ -79,7 +79,13 @@ def _report_command(args: argparse.Namespace) -> int:
     payload = json.loads(args.input.read_text(encoding='utf-8'))
     report = InvestmentReport.model_validate(payload['report'])
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(render_markdown(report), encoding='utf-8')
+    if args.output.suffix.lower() == '.pdf':
+        from skala_rag.pdf_report import render_pdf
+        render_pdf(report, args.output)
+    elif args.output.suffix.lower() == '.md':
+        args.output.write_text(render_markdown(report), encoding='utf-8')
+    else:
+        raise ValueError('Report output must use .pdf or .md')
     print(args.output)
     return 0
 
@@ -88,9 +94,13 @@ def _analyze_command(args: argparse.Namespace) -> int:
     from skala_rag.runtime import build_runtime_agents
     from skala_rag.graph import build_investment_graph, to_storage_payload
     from skala_rag.agents.report import render_markdown
+    from skala_rag.pdf_report import render_pdf, register_font
     from skala_rag.agents.financial_agent.adapter import unavailable_financials
     import re
     import uuid
+
+    # Fail early, before retrieval or paid API calls, if the PDF font is missing.
+    register_font()
 
     model = None
     if args.model:
@@ -126,11 +136,14 @@ def _analyze_command(args: argparse.Namespace) -> int:
         stem = run_dir / f'{index + 1:02d}_{name}'
         stem.with_suffix('.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
         stem.with_suffix('.md').write_text(render_markdown(result['report']), encoding='utf-8')
+        render_pdf(result['report'], stem.with_suffix('.pdf'),
+                   title=f"{result['company_profile'].company_name} 투자 분석 보고서")
         evaluated.append({'company': result['company_profile'].company_name,
                           'decision': result['decision'].decision,
                           'json': stem.with_suffix('.json').name,
-                          'report': stem.with_suffix('.md').name})
-        print(f"{evaluated[-1]['company']}: {evaluated[-1]['decision']} → {stem.with_suffix('.md')}")
+                          'markdown': stem.with_suffix('.md').name,
+                          'report': stem.with_suffix('.pdf').name})
+        print(f"{evaluated[-1]['company']}: {evaluated[-1]['decision']} → {stem.with_suffix('.pdf')}")
     (run_dir / 'summary.json').write_text(json.dumps(evaluated, ensure_ascii=False, indent=2), encoding='utf-8')
     return 0
 
@@ -138,7 +151,7 @@ def _analyze_command(args: argparse.Namespace) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skala-rag")
     commands = parser.add_subparsers(dest="command", required=True)
-    analyze = commands.add_parser('analyze', help='Run A–F and save JSON plus Markdown reports')
+    analyze = commands.add_parser('analyze', help='Run A–F and save PDF, JSON and Markdown reports')
     analyze.add_argument('--query', required=True)
     analyze.add_argument('--company', action='append', default=[], help='Candidate company name; repeat for a batch')
     analyze.add_argument('--as-of-date', type=date.fromisoformat, default=date.today())
@@ -151,7 +164,7 @@ def _parser() -> argparse.ArgumentParser:
     analyze.add_argument('--output', type=Path, default=Path('storage/reports'))
     analyze.set_defaults(handler=_analyze_command)
 
-    report = commands.add_parser('report', help='Render a saved analysis JSON to Markdown')
+    report = commands.add_parser('report', help='Render a saved analysis JSON to PDF or Markdown')
     report.add_argument('--input', type=Path, required=True)
     report.add_argument('--output', type=Path, required=True)
     report.set_defaults(handler=_report_command)

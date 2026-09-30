@@ -34,3 +34,4 @@ storage/db/
 
 # Generated reports
 storage/reports/
+output/pdf/

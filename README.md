@@ -103,12 +103,15 @@ uv run skala-rag analyze --query "로브로스 분석" --retriever bm25
 HF_HOME=storage/models uv run python scripts/generate_report.py \
   --query "로브로스 분석" --as-of-date 2026-09-30
 
-# 저장된 JSON으로 Markdown을 다시 생성
+# 저장된 JSON으로 PDF를 다시 생성 (.md도 지원)
 uv run skala-rag report --input storage/reports/<run-id>/01_robros.json \
-  --output storage/reports/report.md
+  --output storage/reports/report.pdf
 ```
 
-출력은 `storage/reports/<run-id>/` 아래의 기업별 JSON, Markdown, `summary.json`이다.
+출력은 `storage/reports/<run-id>/` 아래의 기업별 PDF, JSON, Markdown, `summary.json`이다.
+PDF는 기본 생성되며 브라우저 설치 없이 한글 글꼴을 내장하고 표·참고문헌·페이지 번호를 출력한다.
+macOS의 Arial Unicode, Windows의 맑은 고딕, Linux의 NanumGothic을 자동 탐색한다.
+다른 환경에서는 `SKALA_PDF_FONT=/path/to/NanumGothic.ttf`를 지정한다.
 `--company 로브로스 --company 다른기업`처럼 반복하면 기업마다 독립된 State로 분석한다.
 자료 위치는 `--research-root` 또는 `SKALA_RESEARCH_ROOT`로 지정할 수 있다.
 FAISS는 기본적으로 `storage/indexes/qwen3-0.6b-v1`을 사용하며 `--index`로 바꾼다.
