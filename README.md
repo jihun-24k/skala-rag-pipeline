@@ -1,133 +1,165 @@
-# skala-rag-pipeline
+# AI Startup Investment Evaluation Agent
 
-SKALA RAG 파이프라인 프로젝트입니다.
+Physical AI·로보틱스 스타트업의 공개 근거를 모아 기술, 시장·경쟁, 재무를 분석하고 투자 의견 보고서를 작성하는 로컬 Agentic RAG 프로젝트입니다.
 
-Physical AI 스타트업을 대상으로 출처와 불확실성을 추적하면서 기술·시장·재무를 분석하고 투자 의견 보고서를 생성하는 실사형 RAG 프로젝트입니다.
+> 발표 기준: 2026-09-30 `main` (`673ccb7`). 이 문서는 [실습 안내](https://actually-war-1ea.notion.site/AI-1cf7f4c86693800e9e11fa490ed1a2ff)의 README 발표 형식에 맞춰 현재 저장소의 구현을 요약합니다.
 
-배포용 웹 서비스가 아닌 로컬 Python 프로젝트로 개발합니다. REST API나 FastAPI 서버를 두지 않으며, CLI 또는 Python 함수 호출로 분석·평가를 실행합니다. 기술 분석은 사전에 만든 FAISS 인덱스와 JSONL 메타데이터를 읽을 수 있으며, 그래프 결과는 저장 가능한 JSON 자료로 변환할 수 있습니다.
+## Overview
 
-## 문서
+- **Objective:** Physical AI 기업의 투자 가능성을 기술력, 시장성, 경쟁력, 재무 건전성, 근거 수준으로 평가합니다.
+- **Method:** LangGraph로 역할별 에이전트를 연결하고, 검색 근거의 출처·시점·불확실성을 구조화해 다음 단계로 전달합니다.
+- **핵심 원칙:** 자료가 없거나 분류가 불명확하면 점수를 채워 넣지 않고 `추가 실사`로 보냅니다.
 
-- [전체 구현 설계](docs/implementation-design.md)
+## Features
 
-## LangGraph 워크플로
+- 기업 마스터 또는 새로 전달받은 자료로 로봇 형태를 분류합니다. 신규 분류는 확정 결과가 아닌 검토 대상입니다.
+- Markdown·PDF·JSON·JSONL 자료를 읽고 청크로 나눠 로컬 FAISS 인덱스와 SQLite 메타데이터를 만들 수 있습니다.
+- 기술 분석은 기업·기준일·자료 등급을 고려해 근거를 찾고 지지·반대·미확인 정보를 구분합니다.
+- 시장·경쟁 분석은 산업 공통 자료와 해당 기업 자료를 분리해 로컬 BM25로 검색하고, 모델을 연결한 경우 인용 구절을 검증합니다.
+- 투자 판단은 여섯 항목의 점수와 인용 ID를 확인하며, 근거 등급에 따라 허용 점수의 상한을 둡니다.
+- 보고서는 `SUMMARY`에서 시작해 `REFERENCE`로 끝납니다. 근거가 없는 문장은 재작성하거나 제외하고 미확인 항목을 표시합니다.
 
-현재 구현된 그래프는 다음 순서로 실행됩니다.
+## Tech Stack
+
+| 구분 | 현재 코드 |
+| --- | --- |
+| Framework | Python 3.11+, LangGraph, Pydantic v2 |
+| Embedding | 오픈소스 `Qwen/Qwen3-Embedding-0.6B`, 1024차원; 로컬 실행으로 호출 비용을 줄이도록 설계 |
+| Retrieval | 기술 자료: FAISS + SQLite 메타데이터 / 시장 자료: 로컬 BM25 |
+| LLM/Generator | 호출자가 모델을 주입. 시장 분석은 선택적 LangChain 구조화 출력, 보고서 예시는 `ScriptedLLM`; `--real`은 별도 설정한 `gpt-4o-mini` 사용 |
+| 저장·산출물 | 버전별 FAISS 인덱스, SQLite 메타데이터, Markdown 보고서; PDF 변환은 선택 기능 |
+
+**검색 품질 수치:** Hit Rate@K·MRR의 실측치는 현재 저장소에 없습니다. 기술 분석의 Context Precision·Faithfulness 계산 경로는 평가 함수를 주입할 때 사용합니다. 모델 선택은 로컬 실행과 비용을 고려한 구현 선택이며, 다른 임베딩 모델보다 우수하다는 비교 결과는 아닙니다.
+
+## Agents
+
+| 단계 | 역할 | 현재 구현의 범위 |
+| --- | --- | --- |
+| A · 시장 분류 | 기업 식별, Physical AI 형태 분류 | 등록 기업 조회 또는 신규 근거의 규칙 기반 분류. 불확실하면 검토 요청 |
+| B · 기술 분석 | 제품·논문·특허·팀 근거 정리 | 사전 구축 FAISS/JSONL 검색기와 평가 함수를 주입해 사용 |
+| C · 시장·경쟁 분석 | 시장 자료와 기업 자료 검색·비교 | BM25 검색 기본 제공. 생성 모델 미설정 시 검색 근거만 반환 |
+| D · 재무 분석 | DART·FSC·KIND 자료 수집·정규화 | 독립 실행 모듈과 mock/live 모드 제공. 메인 그래프 계약에 맞춘 어댑터 연결은 별도 필요 |
+| E · 투자 판단 | 근거를 검증한 가중 점수와 판정 | 채점 함수를 주입. 재무자료가 없으면 채점 없이 `추가 실사` |
+| F · 보고서 생성 | 근거 인용 보고서 작성 | 구조화 생성과 인용 검사. 예시 스크립트는 준비된 입력·가상 출처 사용 |
+
+### 에이전트를 여섯 개로 나눈 이유
+
+기업 선별 → 기술·시장 실사 → 재무 실사 → 투자 판단 → 보고서 작성이라는 심사 흐름을 역할별 책임으로 옮겼습니다. 자료의 성격에 따라 검증 방법도 다릅니다.
+
+| 역할 | 자료와 처리 방식 | 분리한 이유 |
+| --- | --- | --- |
+| A | 기업 마스터·신규 자료로 형태 분류 | 로봇 형태에 따라 B가 확인할 지표가 달라짐 |
+| B | 논문·특허·제품 설명을 FAISS 벡터 검색 | 표현이 달라도 의미가 가까운 기술 근거를 찾음 |
+| C | 시장·경쟁 자료를 BM25 키워드 검색 | 기업명·시장 용어·수치가 들어 있는 자료를 찾음 |
+| D | DART·FSC·KIND API 자료 수집 | 재무 수치의 원천과 기준일을 구조화해 보존 |
+| E | 근거 ID·등급과 가중 점수 규칙 검사 | 생성 모델의 자유로운 결론 대신 판정 근거를 검증 |
+| F | 검증된 근거를 인용하는 보고서 작성 | 분석과 문장 생성의 책임을 분리 |
+
+A를 먼저 실행하는 이유는 휴머노이드에는 자유도·보행 검증, 고정형 매니퓰레이터에는 가반하중·반복정밀도처럼 확인할 기술 지표가 다르기 때문입니다. B와 C는 서로 다른 자료를 독립적으로 분석할 수 있어 병렬로 실행합니다. 단계별 출력과 근거 ID를 분리하면 어느 단계의 검색·해석·판정이 잘못됐는지 추적할 수 있습니다.
+
+### RAG 평가 설계
+
+검색이 관련 자료를 찾았는지와 생성된 기술 분석이 자료에 근거하는지를 별도로 확인합니다. 기술 에이전트 B에는 아래 두 지표의 **계산 경로**가 구현되어 있습니다. 두 평가 함수인 `judge_context`와 `judge_claims`를 함께 주입할 때만 실행되며, 저장소에는 실제 기업 자료로 측정한 점수가 없습니다.
+
+| 지표 | 확인하는 질문 | 코드에서 계산하는 방법 |
+| --- | --- | --- |
+| Context Precision | 관련 청크가 검색 결과 앞쪽에 있는가? | 평가 함수가 순위별 청크의 관련성을 `true/false`로 판정하고, 관련 청크가 나타난 순위의 정밀도를 평균. `support`·`contradict`·`unknown` 목록을 따로 계산한 뒤 평균 |
+| Faithfulness | 기술 분석의 주장이 선택된 근거로 뒷받침되는가? | 평가 함수가 주장별 근거 여부를 판정하고 `근거 있는 주장 수 / 평가한 주장 수`로 계산. 미래 목표를 뜻하는 E등급 자료는 현재 기술 주장의 근거에서 제외 |
+
+B는 지지 근거 최대 3개, 제한·반대 근거 최대 2개, 미확인 근거 최대 1개를 각각 검색합니다. 따라서 Context Precision은 전체 검색 결과뿐 아니라 어떤 입장의 검색이 흔들리는지도 보여 줄 수 있습니다. Faithfulness는 근거가 없는 기술 주장이 분석문에 들어갔는지 점검합니다. 두 지표 모두 평가 함수의 판정 품질에 영향을 받으므로, 실제 사용 시에는 판정 함수 연결과 사람의 표본 검토가 필요합니다.
+
+**미측정 지표:** Hit Rate@K·MRR·Recall@K·NDCG는 정답 문서 목록을 만든 뒤 검색 순위를 비교해야 하므로 현재 측정하지 않았습니다. 정답 답변이 필요한 Answer Correctness류 지표도 적용하지 않았습니다. BLEU·ROUGE 같은 단어 겹침 지표는 근거의 사실관계를 직접 확인하지 않으므로 투자 근거 검증의 우선 지표로 두지 않았습니다. 대표 질문과 정답 문서를 모아 검색 품질을 재는 일은 후속 과제입니다.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    S([START]) --> A[A 시장 분류]
+    A -->|검토 필요| R[분류 검토·추가 실사]
+    R --> X([END])
+    A -->|분류 가능| B[B 기술 분석]
+    A -->|분류 가능| C[C 시장·경쟁 분석]
+    B --> D[D 재무 분석]
+    C --> D
+    D --> E[E 투자 판단]
+    E --> F[F 보고서 생성]
+    F --> X
+```
+
+| State 영역 | 전달 내용 |
+| --- | --- |
+| 입력 | `query`, `as_of_date`, `candidate_companies`, `current_index` |
+| 분류 | `current_company`, `company_profile`, `market_category` |
+| 분석 | `tech_analysis`, `market_analysis`, `competitor_analysis`, `financial_analysis` |
+| 근거·결과 | `evidence`, `scores`, `decision`, `report` |
+
+B와 C는 같은 단계에서 병렬로 실행됩니다. `evidence`는 ID를 기준으로 합쳐 중복을 막고, 두 분석이 끝난 뒤 D로 진행합니다. `review_required`이거나 형태가 미확정이면 B~F를 호출하지 않는 검토 분기가 있습니다.
+
+## Investment Criteria
+
+| 항목 | 가중치 |
+| --- | ---: |
+| 창업팀 역량·시장 적합성 | 15% |
+| 시장 매력도 | 15% |
+| 제품·기술 경쟁력 | 25% |
+| 시장 검증·사업 성과 | 20% |
+| 지속 가능한 경쟁우위 | 10% |
+| 확장성·제품당 수익성 | 15% |
+
+E는 항목별 1~5점 제안을 근거 ID·등급과 대조합니다. 재무자료 미확보 또는 근거 부족은 `추가 실사`가 될 수 있습니다. 모든 항목이 기준을 넘고 총점 75점 이상이면 `투자`, 기술을 포함한 다섯 항목 이상이 기준을 넘으면 `조건부 투자`, 그 밖에는 규칙에 따라 `투자 제외`로 판정합니다.
+
+## Directory Structure
 
 ```text
-START → 시장 분류 ─┬→ 기술 분석 ───┐
-                   └→ 시장·경쟁 분석 ─┴→ 재무 분석 → 투자 판단 → 보고서 생성 → END
+src/skala_rag/
+├── agents/market_classification/   # A: 기업 분류
+├── agents/tech_agents/             # B: 기술 근거 분석
+├── agents/market_competition/      # C: 시장·경쟁 검색과 분석
+├── agents/financial_agent/         # D: 재무 API 수집·정규화
+├── agents/decision_agents/         # E: 투자 판단
+├── agents/report.py                # F: 보고서 생성
+├── graph/                           # LangGraph와 공유 State
+├── ingestion/                       # 문서 로딩·청킹·임베딩·색인
+├── retrieval/                       # FAISS 검색·메타데이터
+└── cli.py                           # 로컬 인덱스 build/search CLI
+scripts/example_robros.py           # 준비된 예시 입력으로 보고서 생성
+tests/                              # 단위·통합 테스트
 ```
 
-- 기술 분석과 시장·경쟁 분석은 같은 super-step에서 병렬 실행됩니다.
-- 분류 결과가 `review_required`이거나 형태 미확정이면 평가 에이전트를 건너뛰고 `추가 실사` 보고서를 반환합니다.
-- 재무 분석은 두 분석이 모두 끝날 때까지 기다립니다.
-- 각 분석 노드가 추가한 `evidence`는 `evidence_id` 기준으로 병합됩니다.
-- 구체적인 LLM, 검색기, 데이터 저장소는 `InvestmentAgents`로 주입합니다.
-
-핵심 파일:
-
-- `src/skala_rag/models/investment.py`: 에이전트별 구조화 결과 모델
-- `src/skala_rag/graph/state.py`: 공유 State와 evidence reducer
-- `src/skala_rag/agents/interfaces.py`: 6개 에이전트 호출 계약
-- `src/skala_rag/agents/market_classification/`: A 접수·시장분류 구현과 기업 마스터 어댑터
-- `src/skala_rag/agents/market_competition/`: C 시장·경쟁 RAG, 출처 검증과 산업 공통 자료 검색
-- `src/skala_rag/graph/workflow.py`: 그래프 노드와 edge 정의
-
-B·E 구현은 기존 `InvestmentAgents`에 주입할 수 있습니다. `to_storage_payload(result)`는 그래프 결과를 JSON 호환 자료로 변환하며 DB에 직접 저장하지 않습니다. 그래프 연결과 변환 검사는 `uv run pytest -q`로 확인합니다.
-
-```python
-from skala_rag.agents import InvestmentAgents
-from skala_rag.graph import build_investment_graph
-
-agents = InvestmentAgents(
-    classify_market=classify_market,
-    analyze_technology=analyze_technology,
-    analyze_market=analyze_market,
-    analyze_financials=analyze_financials,
-    make_decision=make_decision,
-    write_report=write_report,
-)
-graph = build_investment_graph(agents)
-
-result = graph.invoke(
-    {"query": "분석할 기업과 요청", "as_of_date": "2026-09-30"}
-)
-```
-
-## 개발 환경
+## Usage
 
 ```bash
 uv sync --group dev
-uv run pytest -q
+
+# 준비된 로브로스 예시 입력으로 Markdown 보고서 생성(API 키 불필요)
+uv run python scripts/example_robros.py --no-pdf
+
+# 색인 CLI: 실제 자료 디렉터리와 로컬 모델 다운로드 필요
+uv run skala-rag index build --source ../자료조사 --output storage/indexes/demo-v1
+uv run skala-rag index search --index storage/indexes/demo-v1 --query "로봇 기술 근거" --company-id robros
 ```
 
-## 보고서 생성 에이전트
+예시 보고서 경로는 `storage/reports/robros_2026-09-30.md`입니다. `../자료조사`의 기업 마스터·원문 자료는 저장소 바깥에 있으므로 별도 준비가 필요합니다. 현재 CLI에는 전체 투자 그래프를 한 번에 실행하는 `analyze` 명령이 없습니다.
 
-`src/skala_rag/agents/report.py`의 `make_report_writer()`가 `InvestmentAgents.write_report` 계약(`ReportWriter`)을 구현합니다. 분석 결과·투자 판단·evidence만 사용하고 새 자료를 검색하지 않으며, 판단을 바꾸지 않습니다.
+## Investment Report: 발표 핵심
 
-```python
-from langchain_openai import ChatOpenAI
-from skala_rag.agents.report import make_report_writer, render_markdown
+보고서는 `SUMMARY` → 기업·기술 → 시장·경쟁 → 재무·위험 → 투자 의견 → `REFERENCE` 순으로 읽습니다. 데모의 **64점·조건부 투자**는 `example_robros.py`에 미리 넣은 예시 점수와 가상 URL을 사용한 출력이며, 실제 로브로스에 대한 검증된 투자 의견이 아닙니다. 데모에서는 재구매·현장 가동률·장기 운전 지표를 추가 실사 조건으로 제시합니다.
 
-write_report = make_report_writer(ChatOpenAI(model="gpt-4o-mini", temperature=0), output_dir="storage/reports")
-agents = InvestmentAgents(..., write_report=write_report)
-report = build_investment_graph(agents).invoke({...})["report"]
-print(render_markdown(report))
-```
+## Limitations & Lessons Learned
 
-- 설계서 8장 구조(SUMMARY → … → REFERENCE, 5페이지)를 `InvestmentReport`의 6개 필드에 나눠 담습니다.
-- 모든 문장에 evidence ID를 구조화 출력으로 받고, 근거 없는 주장은 1회 재작성 후 제외합니다. 이어서 인용 근거가 문장의 수치·조건을 실제로 뒷받침하는지 한 번 더 검사합니다(Self-RAG식 검증).
-- 본문은 `[n]`, `references`는 실제 인용한 자료만 첫 등장 순서로 싣습니다. E 등급은 로드맵으로만 표기하고, `MissingFact`는 "확인 불가 항목" 표로 노출합니다.
-- 그래프가 넘겨줄 수 있으면 `scores`, `market_category`를 키워드 인자로 받아 점수표와 스냅샷을 채웁니다.
+- 분류 A는 키워드 규칙 기반이며 URL 원문·법인 소유권을 자동 검증하지 않습니다.
+- C는 기본 실행 시 `retrieval_only`입니다. 원격 LLM의 실제 품질과 검색 Hit Rate@K·MRR은 아직 측정하지 않았습니다.
+- D의 독립 출력과 그래프의 `FinancialAssessment` 계약은 추가 연결이 필요합니다. 로브로스 데모도 A~E 전체 실행 결과가 아니라 F에 준비된 입력을 넣은 결과입니다.
+- 현재 `main`에서는 일부 테스트가 실패하며, 전체 그래프의 통합 실행을 검증하지 못했습니다.
+- 부족한 데이터에서 수치와 결론을 만드는 대신 출처, 기준일, 미확인 항목을 끝까지 보존하는 것이 이 프로젝트의 핵심 학습입니다.
 
-예시 실행(API 키 불필요, 로브로스 예시 데이터):
+## Contributors
 
-```bash
-uv run python scripts/example_robros.py --no-pdf        # Markdown만
-uv pip install markdown pypdf playwright && uv run playwright install chromium
-uv run python scripts/example_robros.py                 # PDF 변환 + 페이지 수 확인
-```
-# 실제 분석 및 보고서 실행
-
-```bash
-uv sync
-# 로컬 Qwen 모델과 FAISS로 검색하고 근거·결측값을 보고서로 저장
-HF_HOME=storage/models uv run skala-rag analyze \
-  --query "로브로스 투자 분석" --as-of-date 2026-09-30
-
-# 모델 다운로드 없이 BM25로 자료·그래프 연결 확인
-uv run skala-rag analyze --query "로브로스 분석" --retriever bm25
-
-# 같은 실행을 스크립트로 수행
-HF_HOME=storage/models uv run python scripts/generate_report.py \
-  --query "로브로스 분석" --as-of-date 2026-09-30
-
-# 저장된 JSON으로 PDF를 다시 생성 (.md도 지원)
-uv run skala-rag report --input storage/reports/<run-id>/01_robros.json \
-  --output storage/reports/report.pdf
-```
-
-출력은 `storage/reports/<run-id>/` 아래의 기업별 PDF, JSON, Markdown, `summary.json`이다.
-PDF는 기본 생성되며 브라우저 설치 없이 한글 글꼴을 내장하고 표·참고문헌·페이지 번호를 출력한다.
-macOS의 Arial Unicode, Windows의 맑은 고딕, Linux의 NanumGothic을 자동 탐색한다.
-다른 환경에서는 `SKALA_PDF_FONT=/path/to/NanumGothic.ttf`를 지정한다.
-`--company 로브로스 --company 다른기업`처럼 반복하면 기업마다 독립된 State로 분석한다.
-자료 위치는 `--research-root` 또는 `SKALA_RESEARCH_ROOT`로 지정할 수 있다.
-FAISS는 기본적으로 `storage/indexes/qwen3-0.6b-v1`을 사용하며 `--index`로 바꾼다.
-
-기본 실행은 LLM과 재무 API를 사용하지 않으며 검색 근거·결측 정보를 출력하고
-투자 점수 없이 `추가 실사`로 반환한다. 실제 생성·채점을 사용하려면 `uv sync --extra llm`을
-실행하고 `OPENAI_API_KEY`와 `--model <사용할 모델명>`을 설정한다.
-재무 수집은 `--financial-api`로 활성화한다. DART/FSC는 해당 키를 환경 또는 `.env`에서
-읽으며 KIND는 공개 웹 조회를 사용한다. API/LLM 오류는 성공한 분석으로 감추지 않는다.
-재무 어댑터의 기준일 검사는 재무 기간 기준이며 역사적 공시 발표 시점 검증은 별도 과제다.
-
-`runtime.build_runtime_agents()`의 `technology_retriever`, `market_retriever`에 서로 다른
-리트리버를 주입할 수 있다. 공통 FAISS 검색 계약은 `EvidenceRetriever.search(RetrievalQuery)`이며,
-에이전트 어댑터는 원문 URL·자료 관측일·기업 식별자를 검증한 메타데이터와 조인한다.
-기존 인덱스에 없거나 원문 메타데이터와 매칭되지 않는 자료는 제외한다.
-FAISS 인덱스에 새 산업 공통 자료를 추가했다면 메타데이터의 `locator`도 해당 파일 경로로 지정한다.
-
-검증: `uv run pytest -q` (재무 에이전트 테스트 포함).
-`scripts/run_langgraph.py`는 고정값을 사용하는 그래프 데모이며 실제 실행은 위 명령을 사용한다.
+| 이름 | 담당 영역 |
+| --- | --- |
+| 김지훈 | LangGraph, VectorDB |
+| 박시현 | 투자보고서 생성 Agent |
+| 이병길 | 재무 정보 수집 Agent |
+| 이수빈 | 설계 |
+| 최병준 | Tech Agent, Decision Agent |
+| 최유정 | 접수/분류 Agent, 시장/경쟁 Agent |
