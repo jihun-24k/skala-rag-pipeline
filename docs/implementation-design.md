@@ -7,7 +7,7 @@
 핵심 설계는 다음과 같다.
 
 - 원문 전체를 무차별 임베딩하지 않고, 회사별 12~20개 산출물과 40~80개의 주장 중심 청크를 관리한다.
-- 서술형 근거는 OpenSearch의 BM25 + 벡터 검색으로, 숫자·날짜·회사·제품 버전·재무정보는 PostgreSQL로 조회한다.
+- 서술형 근거는 사전 생성한 FAISS 벡터 인덱스에서 검색하고, 숫자·날짜·회사·제품 버전·재무정보는 PostgreSQL에서 조회한다.
 - LangGraph에서 접수·분류, 기술, 시장·경쟁, 재무, 투자판단, 보고서 에이전트를 명시적으로 분리한다.
 - 검색 결과는 지지 근거, 반대 근거, 미확인 항목을 함께 반환한다.
 - 최종 답변의 모든 중요한 주장과 수치는 evidence ID에 연결하고, 자료 부족은 추정하지 않고 `확인 불가`로 남긴다.
@@ -53,7 +53,7 @@ flowchart LR
     C --> D[회사/제품/날짜 정규화]
     D --> E[주장 중심 청킹·중복 제거]
     E --> F[(PostgreSQL\n정형 데이터·메타데이터)]
-    E --> G[(OpenSearch\nBM25 + Vector + RRF)]
+    E --> G[(FAISS 벡터 인덱스\n+ JSONL 메타데이터)]
     B --> H[(원문 저장소\n로컬 또는 S3/MinIO)]
 
     U[사용자 요청] --> I[FastAPI]
@@ -74,15 +74,15 @@ flowchart LR
 | API | FastAPI + Pydantic v2 | 구조화 입출력, OpenAPI, 비동기 작업 연동 |
 | 워크플로 | LangGraph | 상태, 분기, 루프, 병렬 fan-out/fan-in을 코드로 명시 |
 | 정형 저장 | PostgreSQL | 재무 수치, 날짜, 점수, 버전, 관계, 감사 로그 |
-| 검색 | OpenSearch | 한국어 BM25, 벡터 검색, RRF, 메타데이터 필터를 한 계층에서 처리 |
-| 한국어 분석 | `analysis-nori` + 사용자 사전 | 회사명, 제품명, 특허번호, 로봇 도메인 용어의 정확 매칭 |
+| 검색 | FAISS | 사전 생성한 벡터 인덱스에서 의미 기반 검색 |
+| 메타데이터 필터 | JSONL + Python | 회사·기준일·출처 등은 벡터 ID와 연결된 자료로 확인 |
 | 임베딩 | Qwen3-Embedding-0.6B 우선 검증 | 한·영 혼합 자료와 자체 호스팅 요구에 적합한 후보. 실제 채택은 고정 평가셋으로 확정 |
 | 원문 저장 | 로컬 파일(MVP), S3/MinIO(확장) | 원본 해시와 스냅샷 보존 |
 | 체크포인트 | PostgreSQL checkpointer | 재시작, 실행 추적, 사람 검수 재개 |
 | 관측성 | 구조화 로그 + LangSmith 선택 | 노드별 지연, 토큰, 검색 문서, 오류 추적 |
 | 패키지 | `uv` | 참고 프로젝트와 동일한 Python 3.11 기반 재현성 |
 
-FAISS는 로컬 개발용 baseline으로만 유지한다. 운영 설계의 핵심인 한국어 BM25, RRF, 메타데이터 필터, 증분 색인에는 OpenSearch가 더 적합하다.
+FAISS 인덱스는 원문이 아니라 벡터를 보관한다. `faiss_id`로 연결되는 JSONL 메타데이터를 함께 관리하고, 사용자 요청 전에 인덱스를 생성·갱신한다. 현 구현은 작은 대상 기업 집합을 전부 검색한 뒤 회사·기준일·입장을 필터링한다.
 
 ## 4. 데이터 설계
 
@@ -90,7 +90,7 @@ FAISS는 로컬 개발용 baseline으로만 유지한다. 운영 설계의 핵�
 
 1. **원문 저장소**: PDF/HTML/JSON 원본, 접근일, 콘텐츠 해시
 2. **PostgreSQL**: 기업·제품·문서·주장·수치·평가·실행 상태
-3. **OpenSearch**: 검색 가능한 evidence chunk와 필터용 메타데이터
+3. **FAISS + JSONL**: 검색 가능한 evidence 벡터와 ID별 청크·출처 메타데이터
 
 ### 핵심 테이블
 
@@ -103,7 +103,7 @@ FAISS는 로컬 개발용 baseline으로만 유지한다. 운영 설계의 핵�
 | `source_events` | `id`, `primary_document_id`, `event_type`, `event_date` | 재배포 기사·보도자료의 독립 증거 과대계상 방지 |
 | `evidence_claims` | `id`, `document_id`, `company_id`, `product_id`, `claim_type`, `claim_text`, `stance`, `quote`, `locator`, `confidence`, `human_reviewed` | 검증 가능한 주장 단위 |
 | `numeric_facts` | `claim_id`, `metric_name`, `value`, `unit`, `currency`, `period_start/end`, `test_condition`, `baseline` | 숫자 비교·계산용 정형 데이터 |
-| `document_chunks` | `id`, `document_id`, `claim_ids`, `chunk_text`, `token_count`, `embedding_model`, `index_version` | OpenSearch와 원문 연결 |
+| `document_chunks` | `id`, `document_id`, `claim_ids`, `chunk_text`, `token_count`, `embedding_model`, `index_version` | FAISS ID와 원문 연결 |
 | `contradictions` | `left_claim_id`, `right_claim_id`, `type`, `resolution_status`, `note` | 사양·날짜·금액 불일치 관리 |
 | `evaluations` | `company_id`, `run_id`, `dimension`, `score`, `weight`, `confidence`, `rationale` | 투자 판단 점수와 근거 |
 | `reports` | `run_id`, `company_id`, `decision`, `content`, `generated_at`, `as_of_date` | 최종 산출물 |
@@ -166,7 +166,7 @@ flowchart TD
     H --> I[사람 검수 대기]
     I --> J[PostgreSQL 저장]
     I --> K[주장 중심 청킹]
-    K --> L[임베딩·OpenSearch 색인]
+    K --> L[임베딩·FAISS 색인 + JSONL 메타데이터]
 ```
 
 ### 입력 manifest
@@ -220,11 +220,11 @@ sources:
 
 1. 질문에서 `company_id`, 분석 차원, 기준일, 제품 버전, 수치 요구 여부를 추출한다.
 2. 정확한 숫자·기간 집계는 PostgreSQL로 라우팅한다.
-3. 설명·근거·장단점은 OpenSearch hybrid search로 라우팅한다.
-4. BM25와 vector 결과를 RRF로 합친다.
-5. 회사, 문서 등급, 기준일, 제품 버전, 권한으로 필터링한다.
-6. 후보 20개를 가져와 cross-encoder 또는 LLM reranker로 8~12개로 줄인다.
-7. 최종 context pack은 지지 3개, 반대 2개, 미확인 1개를 목표로 구성한다.
+3. 설명·근거·장단점은 FAISS 벡터 검색으로 라우팅한다.
+4. FAISS가 반환한 ID 순위와 JSONL 메타데이터를 연결한다.
+5. 회사, 문서 등급, 기준일, 제품 버전, 권한을 메타데이터에서 필터링한다.
+6. 현재 B는 회사·기준일 필터 후 입장별로 지지 3개, 반대 2개, 미확인 1개까지 선택한다.
+7. 필요할 때 후보를 더 가져와 reranker를 연결한다.
 8. 문서 관련성이 부족하면 질의를 한 번 재작성하고, 그래도 부족하면 `확인 불가`로 종료한다.
 
 ### 검색 쿼리 세트
@@ -425,7 +425,7 @@ skala-rag-pipeline/
 ├── configs/
 │   ├── companies/
 │   ├── prompts/
-│   └── opensearch/
+│   └── faiss/
 ├── src/skala_rag/
 │   ├── api/
 │   ├── cli.py
@@ -437,7 +437,7 @@ skala-rag-pipeline/
 │   │   ├── dedup.py
 │   │   └── indexer.py
 │   ├── retrieval/
-│   │   ├── hybrid.py
+│   │   ├── faiss.py
 │   │   ├── sql.py
 │   │   ├── reranker.py
 │   │   └── context_builder.py
@@ -488,7 +488,7 @@ skala-rag-pipeline/
 - `PDFRetrievalChain`은 `source_uri`를 문자열로 받지만 `load_documents`는 리스트를 순회한다. 그대로 실행하면 문자열의 각 문자를 파일 경로로 처리할 수 있다.
 - `PDFRetrievalChain.__init__`이 `super().__init__(**kwargs)`를 호출하지만 부모 생성자는 인자를 받지 않는다.
 - 확장자 없는 PDF는 PDF가 맞아도 거부한다. MIME type과 magic bytes로 판별해야 한다.
-- FAISS의 `allow_dangerous_deserialization=True`는 신뢰되지 않은 인덱스에 사용하면 안 된다.
+- FAISS 인덱스 파일은 신뢰된 로컬 산출물만 `read_index`로 읽는다.
 - `format_docs`는 모든 문서에 `source`, `page`가 있다고 가정한다. 문서 유형별 locator 모델이 필요하다.
 - 단순 similarity top-k는 제품명·특허번호·정확한 수치 검색과 반대 증거 균형을 보장하지 않는다.
 - notebook 예제의 수동 JSON parsing 대신 Pydantic structured output을 사용해야 한다.
@@ -521,7 +521,7 @@ skala-rag-pipeline/
 ### 코드 테스트
 
 - 단위: parser, entity resolver, evidence scorer, SQL guard, decision rules
-- 통합: PDF/HTML → DB/OpenSearch → hybrid retrieval
+- 통합: PDF/HTML → PostgreSQL/FAISS → 벡터 검색
 - 그래프: 각 branch, retry 한도, 일부 에이전트 실패, checkpoint resume
 - golden: 고정 회사·기준일에서 동일한 evidence set과 결정 schema 생성
 - 보안: prompt injection corpus, 악성 URL, 다중 SQL, 권한 없는 문서 필터
@@ -540,14 +540,14 @@ skala-rag-pipeline/
 ### 1단계 - 실행 골격
 
 - `pyproject.toml`, 설정, Docker Compose, FastAPI health endpoint
-- PostgreSQL migration과 OpenSearch index template
+- PostgreSQL migration과 FAISS 인덱스·메타데이터 형식
 - 공통 Pydantic 모델, repository, structured logging
 
 ### 2단계 - 수집과 검색
 
 - PDF/HTML/API loader와 원문 스냅샷
 - 회사·제품·인물 정규화, claim/numeric fact 추출
-- 중복·버전 처리, Qwen 임베딩, hybrid retrieval
+- 중복·버전 처리, 질의·문서 임베딩, FAISS 검색
 - 회사 한 곳의 40~80개 청크 golden dataset 완성
 
 ### 3단계 - 그래프와 에이전트
@@ -569,7 +569,7 @@ skala-rag-pipeline/
 첫 수직 슬라이스는 기업 하나와 질문 하나를 끝까지 통과시키는 것이다.
 
 1. 로브로스의 승인 문서 12~20개를 manifest로 등록한다.
-2. 원문 → evidence claim → OpenSearch/PostgreSQL 색인을 완성한다.
+2. 원문 → evidence claim → FAISS 인덱스·PostgreSQL 저장을 완성한다.
 3. 기술 에이전트 하나만 먼저 구현한다.
 4. 근거 ID가 포함된 기술 평가 결과를 만든다.
 5. 시장·재무 에이전트를 병렬로 추가한다.
@@ -577,4 +577,3 @@ skala-rag-pipeline/
 7. 동일 입력에서 evidence set이 안정적으로 재현되는지 평가한다.
 
 이 순서가 데이터 파이프라인, 검색 품질, 에이전트 협업, 보고서 재현성을 가장 빠르게 동시에 검증한다.
-
