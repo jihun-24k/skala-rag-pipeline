@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from pathlib import Path
 from typing import Protocol
 
@@ -55,7 +56,9 @@ class FaissEvidenceRetriever:
             request.query,
             instruction=request.instruction,
         )
-        fetch_k = request.fetch_k or max(request.top_k * 10, 50)
+        filtered = request.company_id or request.source_grades or request.dimensions or request.source_paths
+        fetch_k = (self.manifest.chunk_count if filtered else
+                   request.fetch_k or max(request.top_k * 10, 50))
         scores, ids = self._store.search(query_vector, fetch_k)
         ordered_ids = [int(value) for value in ids[0] if int(value) >= 0]
         rows = self._repository.find_by_vector_ids(ordered_ids)
@@ -71,6 +74,12 @@ class FaissEvidenceRetriever:
             if request.source_grades and row["source_grade"] not in request.source_grades:
                 continue
             if request.dimensions and row["dimension"] not in request.dimensions:
+                continue
+            path = unicodedata.normalize('NFC', row['source_path'])
+            if request.source_paths and not any(
+                path == p or path.endswith('/' + p)
+                for p in (unicodedata.normalize('NFC', s) for s in request.source_paths)
+            ):
                 continue
             hits.append(
                 RetrievalHit(

@@ -50,6 +50,7 @@ class RetrievalQuery(RetrievalModel):
     company_id: str | None = None
     source_grades: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
+    source_paths: list[str] = Field(default_factory=list)
     top_k: int = Field(default=10, ge=1, le=100)
     fetch_k: int | None = Field(default=None, ge=1)
     instruction: str | None = None

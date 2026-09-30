@@ -283,7 +283,7 @@ def decision_node(
     decision = InvestmentDecision(
         decision=graph_verdict,
         total_score=total,
-        confidence=confidence,
+        confidence=confidence if confidence is not None else 0.0,
         investment_reasons=investment_reasons,
         counter_arguments=counter_arguments,
         red_flags=red_flags,

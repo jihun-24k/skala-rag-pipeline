@@ -44,6 +44,10 @@ class FaissVectorStore:
         self._index.add_with_ids(prepared_vectors, prepared_ids)
 
     def search(self, query_vector: np.ndarray, top_k: int) -> tuple[np.ndarray, np.ndarray]:
+        if platform.system() == "Darwin":
+            import faiss
+            # OpenMP settings are per calling thread; LangGraph runs B/C in workers.
+            faiss.omp_set_num_threads(1)
         prepared = np.ascontiguousarray(query_vector, dtype="float32")
         if prepared.ndim != 2 or prepared.shape[1] != self.dimension:
             raise ValueError("Query embedding has an invalid dimension")

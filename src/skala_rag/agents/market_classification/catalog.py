@@ -30,10 +30,17 @@ def default_research_root() -> Path:
         raise FileNotFoundError(f"Company master missing below SKALA_RESEARCH_ROOT: {root}")
 
     here = Path(__file__).resolve()
-    for parent in here.parents:
-        for root in parent.iterdir():
-            if (root / "data/company_master.json").is_file():
-                return root
+    project = next((p for p in here.parents if (p / "pyproject.toml").is_file()), Path.cwd())
+    # Search bounded project locations, including decomposed Unicode folder names.
+    for base in (project / "storage/raw", project, project.parent):
+        if not base.is_dir():
+            continue
+        for root in (base, *sorted(base.iterdir())):
+            try:
+                if (root / "data/company_master.json").is_file():
+                    return root
+            except OSError:
+                continue
     raise FileNotFoundError(
         "Company master not found; set SKALA_RESEARCH_ROOT to the 자료조사 directory"
     )

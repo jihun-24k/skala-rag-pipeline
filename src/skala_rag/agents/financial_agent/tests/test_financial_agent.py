@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from financial_agent.agent.financial_agent import (
+from skala_rag.agents.financial_agent.agent.financial_agent import (
     FinancialAgent,
     financial_agent,
     get_financial_data,
     get_financial_data_batch,
 )
-from financial_agent.models.schemas import (
+from skala_rag.agents.financial_agent.models.schemas import (
     ApiStatus,
     CompanyRef,
     FinancialApiResponse,
     FinancialData,
     FinancialValue,
 )
-from financial_agent.service import FinancialCalculator, FinancialCollector, FinancialNormalizer
+from skala_rag.agents.financial_agent.service import FinancialCalculator, FinancialCollector, FinancialNormalizer
 
 
 class StubClient:
