@@ -114,8 +114,10 @@ def test_graph_runs_parallel_analyses_then_fans_in() -> None:
             scores={"technology": score},
         )
 
-    def report(profile, tech, market_result, financial, decision, all_evidence):
+    def report(profile, tech, market_result, financial, decision, all_evidence, *, scores, market_category):
         calls.append("report")
+        assert set(scores) == {"technology"}
+        assert market_category.industry == "Robotics"
         return InvestmentReport(
             summary="summary",
             technology="technology",
