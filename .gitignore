@@ -28,3 +28,6 @@ build/
 data/
 tmp/
 storage/raw/
+
+# Generated reports
+storage/reports/
