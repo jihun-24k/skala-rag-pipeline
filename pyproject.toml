@@ -11,14 +11,25 @@ requires-python = ">=3.11"
 dependencies = [
   "langchain-openai>=0.3,<2.0",
   "langgraph>=1.0,<2.0",
+  "numpy>=1.26,<3.0",
+  "pypdf>=5.0,<7.0",
   "pydantic>=2.9,<3.0",
+  "sentence-transformers>=2.7,<6.0",
+  "torch>=2.2,<3.0",
+  "transformers>=4.51,<6.0",
   "typing-extensions>=4.12",
 ]
+
+[project.scripts]
+skala-rag = "skala_rag.cli:main"
 
 [dependency-groups]
 dev = [
   "pytest>=8.3,<10.0",
 ]
+
+[project.optional-dependencies]
+market-llm = ["langchain>=1.0,<2.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/skala_rag"]

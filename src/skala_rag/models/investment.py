@@ -29,7 +29,22 @@ class Evidence(DomainModel):
     source_grade: Literal["A", "B", "C", "D", "E"]
     source_uri: str
     locator: str | None = None
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    # 검색기가 확인한 메타데이터를 보존한다. 이 값들은 점수 상한과 시점 검증에 쓰고,
+    # model_dump(mode="json")으로 추후 저장 계층에 그대로 전달할 수 있다.
+    company_id: str | None = None
+    published_at: date | None = None
+    source_event_id: str | None = None
+    independent: bool | None = None
+    value: float | None = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+    metric_names: list[str] = Field(default_factory=list)
+    topic: str | None = None
+    paper_id: str | None = None
+    patent_family_id: str | None = None
+    paper_company_author: bool | None = None
+    paper_core_relevant: bool | None = None
+    paper_has_results: bool | None = None
 
 
 class CompanyProfile(DomainModel):
@@ -38,6 +53,12 @@ class CompanyProfile(DomainModel):
     physical_ai_type: str
     stage: str
     as_of_date: date
+    listing_status: str | None = None
+    business_model: str | None = None
+    classification_status: str = "unverified"
+    supply_roles: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class MarketCategory(DomainModel):
@@ -46,6 +67,19 @@ class MarketCategory(DomainModel):
     target_market: list[str] = Field(default_factory=list)
     customer_type: list[str] = Field(default_factory=list)
     analysis_scope: list[str] = Field(default_factory=list)
+    secondary_forms: list[str] = Field(default_factory=list)
+    priority_metrics: list[str] = Field(default_factory=list)
+    review_required: bool = False
+
+
+class RagEvaluation(DomainModel):
+    """B의 검색 순위와 생성 문장에 대한 정답 문서 없는 평가 결과."""
+
+    context_precision: float | None = Field(default=None, ge=0.0, le=1.0)
+    faithfulness: float | None = Field(default=None, ge=0.0, le=1.0)
+    context_precision_by_stance: dict[str, float] = Field(default_factory=dict)
+    judged_contexts: int = Field(ge=0)
+    judged_claims: int = Field(ge=0)
 
 
 class TechAssessment(DomainModel):
@@ -56,11 +90,34 @@ class TechAssessment(DomainModel):
     patents: list[str] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
     technical_risks: list[str] = Field(default_factory=list)
+    team: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+    missing_facts: list[MissingFact] = Field(default_factory=list)
+    rag_evaluation: RagEvaluation | None = None
+
+
+class MarketFinding(DomainModel):
+    topic: str
+    text: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class CompetitorComparison(DomainModel):
+    competitor_name: str
+    comparison: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class CompetitorAnalysis(DomainModel):
+    comparisons: list[CompetitorComparison] = Field(default_factory=list)
     missing_facts: list[MissingFact] = Field(default_factory=list)
 
 
 class MarketAssessment(DomainModel):
+    analysis_status: str = "unverified"
+    market_definition: list[str] = Field(default_factory=list)
+    outlook: list[str] = Field(default_factory=list)
+    findings: list[MarketFinding] = Field(default_factory=list)
     tam: str | None = None
     sam: str | None = None
     som: str | None = None
@@ -74,6 +131,8 @@ class MarketAssessment(DomainModel):
 
 
 class FinancialAssessment(DomainModel):
+    # D가 재무제표 확보를 명시하지 않으면 E는 채점하지 않는다.
+    status: Literal["available", "unavailable"] = "unavailable"
     revenue: str | None = None
     operating_income: str | None = None
     total_assets: str | None = None
@@ -91,13 +150,15 @@ class ScoreDetail(DomainModel):
     dimension: str
     score: float = Field(ge=0.0, le=100.0)
     weight: float = Field(ge=0.0, le=1.0)
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     rationale: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    missing_status: str | None = None
 
 
 class InvestmentDecision(DomainModel):
     decision: Literal["투자", "조건부 투자", "추가 실사", "투자 제외"]
-    total_score: float = Field(ge=0.0, le=100.0)
+    total_score: float | None = Field(default=None, ge=0.0, le=100.0)
     confidence: float = Field(ge=0.0, le=1.0)
     investment_reasons: list[str] = Field(default_factory=list)
     counter_arguments: list[str] = Field(default_factory=list)

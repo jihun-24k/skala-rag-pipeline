@@ -7,7 +7,7 @@
 핵심 설계는 다음과 같다.
 
 - 원문 전체를 무차별 임베딩하지 않고, 회사별 12~20개 산출물과 40~80개의 주장 중심 청크를 관리한다.
-- 서술형 근거는 OpenSearch의 BM25 + 벡터 검색으로, 숫자·날짜·회사·제품 버전·재무정보는 PostgreSQL로 조회한다.
+- 서술형 근거는 로컬 BM25 + FAISS 하이브리드 검색으로, 숫자·날짜·회사·제품 버전·재무정보는 SQLite로 조회한다.
 - LangGraph에서 접수·분류, 기술, 시장·경쟁, 재무, 투자판단, 보고서 에이전트를 명시적으로 분리한다.
 - 검색 결과는 지지 근거, 반대 근거, 미확인 항목을 함께 반환한다.
 - 최종 답변의 모든 중요한 주장과 수치는 evidence ID에 연결하고, 자료 부족은 추정하지 않고 `확인 불가`로 남긴다.
@@ -26,7 +26,7 @@
 
 ### MVP에 포함
 
-- 사전 선정 기업 3~5개
+- 보고서에 정의된 사전 선정 기업 10개(로브로스, 위로보틱스, 메타파머스, 에이딘로보틱스, 투모로로보틱스, 뉴빌리티, 라이온로보틱스, 디든로보틱스, 홀리데이로보틱스, 리얼월드)
 - 기업당 핵심 산출물 12~20개, 검색 청크 40~80개
 - PDF, HTML, 논문, 특허, 공시·IR 자료 수집
 - 기업 식별 및 Physical AI 유형 분류
@@ -42,55 +42,56 @@
 - 투자 주문이나 외부 시스템의 자동 의사결정
 - 유료 리포트 전문의 무단 저장·재배포
 - 완전 자동 크롤링 결과를 사람 검수 없이 운영 DB에 승격하는 기능
-- 그래프 DB 도입. 관계는 MVP에서 PostgreSQL 테이블로 표현하고 필요할 때 확장한다.
+- 그래프 DB와 외부 DB 서버 도입. 관계는 MVP에서 SQLite 테이블로 표현한다.
 
 ## 3. 전체 아키텍처
 
 ```mermaid
 flowchart LR
-    A[승인된 원문\nPDF HTML API] --> B[수집·스냅샷]
+    A[승인된 원문\nPDF HTML JSON] --> B[수집·스냅샷]
     B --> C[파싱·OCR·표 추출]
     C --> D[회사/제품/날짜 정규화]
     D --> E[주장 중심 청킹·중복 제거]
-    E --> F[(PostgreSQL\n정형 데이터·메타데이터)]
-    E --> G[(OpenSearch\nBM25 + Vector + RRF)]
-    B --> H[(원문 저장소\n로컬 또는 S3/MinIO)]
+    E --> F[(SQLite\n정형 데이터·메타데이터)]
+    E --> G[(로컬 검색 인덱스\nBM25 + FAISS + RRF)]
+    B --> H[(로컬 원문 저장소)]
 
-    U[사용자 요청] --> I[FastAPI]
-    I --> J[LangGraph 투자심사 그래프]
+    U[CLI 또는 Python 함수 호출] --> J[LangGraph 투자심사 그래프]
     J --> F
     J --> G
     J --> H
     J --> K[근거 감사·점수 계산]
     K --> L[5페이지 투자보고서]
-    J --> M[(체크포인트·실행 로그)]
-    L --> N[Markdown/PDF 또는 UI]
+    J --> M[(SQLite 체크포인트·실행 로그)]
+    L --> N[로컬 Markdown/JSON 파일]
 ```
 
 ### 권장 기술 스택
 
 | 영역 | 선택 | 이유 |
 |---|---|---|
-| API | FastAPI + Pydantic v2 | 구조화 입출력, OpenAPI, 비동기 작업 연동 |
+| 실행 방식 | Python CLI + import 가능한 service 함수 | 서버나 배포 없이 터미널·노트북·테스트에서 동일 로직 재사용 |
+| 데이터 모델 | Pydantic v2 | 에이전트 경계의 구조화 입출력과 검증 |
 | 워크플로 | LangGraph | 상태, 분기, 루프, 병렬 fan-out/fan-in을 코드로 명시 |
-| 정형 저장 | PostgreSQL | 재무 수치, 날짜, 점수, 버전, 관계, 감사 로그 |
-| 검색 | OpenSearch | 한국어 BM25, 벡터 검색, RRF, 메타데이터 필터를 한 계층에서 처리 |
-| 한국어 분석 | `analysis-nori` + 사용자 사전 | 회사명, 제품명, 특허번호, 로봇 도메인 용어의 정확 매칭 |
+| 정형 저장 | SQLite | 별도 DB 서버 없이 재무 수치, 날짜, 점수, 버전, 실행 로그 저장 |
+| 키워드 검색 | `bm25s` 또는 `rank-bm25` | 로컬 Python에서 회사명·모델명·특허번호 정확 검색 |
+| 벡터 검색 | FAISS | 단일 PC에서 빠른 벡터 검색과 파일 기반 인덱스 저장 |
+| 검색 결합 | Python RRF 구현 | BM25와 vector 순위를 외부 검색 서버 없이 결합 |
 | 임베딩 | Qwen3-Embedding-0.6B 우선 검증 | 한·영 혼합 자료와 자체 호스팅 요구에 적합한 후보. 실제 채택은 고정 평가셋으로 확정 |
-| 원문 저장 | 로컬 파일(MVP), S3/MinIO(확장) | 원본 해시와 스냅샷 보존 |
-| 체크포인트 | PostgreSQL checkpointer | 재시작, 실행 추적, 사람 검수 재개 |
-| 관측성 | 구조화 로그 + LangSmith 선택 | 노드별 지연, 토큰, 검색 문서, 오류 추적 |
+| 원문 저장 | 프로젝트의 `storage/raw/` | 원본 해시와 스냅샷을 로컬에서 보존 |
+| 체크포인트 | SQLite checkpointer | 중단 후 재실행과 실행 추적을 별도 서버 없이 지원 |
+| 관측성 | Python 구조화 로그 | 노드별 지연, 검색 문서, 오류를 로컬 JSONL로 기록 |
 | 패키지 | `uv` | 참고 프로젝트와 동일한 Python 3.11 기반 재현성 |
 
-FAISS는 로컬 개발용 baseline으로만 유지한다. 운영 설계의 핵심인 한국어 BM25, RRF, 메타데이터 필터, 증분 색인에는 OpenSearch가 더 적합하다.
+배포용 웹 서버, REST API, Docker Compose, PostgreSQL, OpenSearch는 MVP 범위에서 제외한다. 메타데이터 필터는 SQLite 조회와 Python predicate로 적용하고, 데이터 규모가 단일 PC 범위를 벗어날 때만 외부 저장소 전환을 다시 검토한다.
 
 ## 4. 데이터 설계
 
 ### 저장 계층
 
 1. **원문 저장소**: PDF/HTML/JSON 원본, 접근일, 콘텐츠 해시
-2. **PostgreSQL**: 기업·제품·문서·주장·수치·평가·실행 상태
-3. **OpenSearch**: 검색 가능한 evidence chunk와 필터용 메타데이터
+2. **SQLite**: 기업·제품·문서·주장·수치·평가·실행 상태
+3. **로컬 검색 인덱스**: BM25 corpus와 FAISS vector index
 
 ### 핵심 테이블
 
@@ -103,7 +104,7 @@ FAISS는 로컬 개발용 baseline으로만 유지한다. 운영 설계의 핵�
 | `source_events` | `id`, `primary_document_id`, `event_type`, `event_date` | 재배포 기사·보도자료의 독립 증거 과대계상 방지 |
 | `evidence_claims` | `id`, `document_id`, `company_id`, `product_id`, `claim_type`, `claim_text`, `stance`, `quote`, `locator`, `confidence`, `human_reviewed` | 검증 가능한 주장 단위 |
 | `numeric_facts` | `claim_id`, `metric_name`, `value`, `unit`, `currency`, `period_start/end`, `test_condition`, `baseline` | 숫자 비교·계산용 정형 데이터 |
-| `document_chunks` | `id`, `document_id`, `claim_ids`, `chunk_text`, `token_count`, `embedding_model`, `index_version` | OpenSearch와 원문 연결 |
+| `document_chunks` | `id`, `document_id`, `claim_ids`, `chunk_text`, `token_count`, `embedding_model`, `index_version` | BM25·FAISS 인덱스와 원문 연결 |
 | `contradictions` | `left_claim_id`, `right_claim_id`, `type`, `resolution_status`, `note` | 사양·날짜·금액 불일치 관리 |
 | `evaluations` | `company_id`, `run_id`, `dimension`, `score`, `weight`, `confidence`, `rationale` | 투자 판단 점수와 근거 |
 | `reports` | `run_id`, `company_id`, `decision`, `content`, `generated_at`, `as_of_date` | 최종 산출물 |
@@ -164,9 +165,9 @@ flowchart TD
     F --> G[주장·수치·조건 추출]
     G --> H[중복 문서와 source event 묶기]
     H --> I[사람 검수 대기]
-    I --> J[PostgreSQL 저장]
+    I --> J[SQLite 저장]
     I --> K[주장 중심 청킹]
-    K --> L[임베딩·OpenSearch 색인]
+    K --> L[BM25 corpus·FAISS 색인]
 ```
 
 ### 입력 manifest
@@ -189,7 +190,7 @@ sources:
 
 - PDF: 페이지와 표 위치를 보존하고, 텍스트가 부족하면 OCR 대기열로 보낸다.
 - HTML: 본문, 표, 제목, canonical URL, 게시·수정일을 보존한다.
-- 공시·API: 원본 JSON과 정규화 레코드를 둘 다 저장한다.
+- 공시·외부 공개 데이터: 내려받은 원본 JSON/CSV와 정규화 레코드를 둘 다 저장한다.
 - 논문: 방법론, 실험 조건, baseline, 결과, 한계를 함께 추출한다.
 - 특허: 패밀리 기준으로 묶고 독립청구항, 출원인, 발명자, 법적 상태를 저장한다.
 - 보도자료·기사: 동일 발표일·숫자·인용문·원출처로 `source_event_id`를 묶는다.
@@ -219,8 +220,8 @@ sources:
 ### 검색 흐름
 
 1. 질문에서 `company_id`, 분석 차원, 기준일, 제품 버전, 수치 요구 여부를 추출한다.
-2. 정확한 숫자·기간 집계는 PostgreSQL로 라우팅한다.
-3. 설명·근거·장단점은 OpenSearch hybrid search로 라우팅한다.
+2. 정확한 숫자·기간 집계는 SQLite repository로 라우팅한다.
+3. 설명·근거·장단점은 로컬 hybrid retriever로 라우팅한다.
 4. BM25와 vector 결과를 RRF로 합친다.
 5. 회사, 문서 등급, 기준일, 제품 버전, 권한으로 필터링한다.
 6. 후보 20개를 가져와 cross-encoder 또는 LLM reranker로 8~12개로 줄인다.
@@ -259,7 +260,7 @@ evidence_score = reliability
 | 접수·분류 | 아니오 | 등록 기업 식별, Physical AI 유형, 단계, 비상장 여부, 분석 템플릿 선택 | `CompanyProfile` |
 | 기술 요약 | 예 | 제품, 기술구조, 논문, 특허, 안전·인증, 장단점, 미확인 항목 | `TechAssessment` |
 | 시장·경쟁 | 예 | TAM/SAM/SOM, 고객, 대체재, 경쟁지도, 비교 근거 | `MarketAssessment` |
-| 재무·자금수요 | 혼합 | PostgreSQL/API 숫자 조회, 현금소진·런웨이·희석 리스크. 자료가 없으면 보류 | `FinancialAssessment` |
+| 재무·자금수요 | 혼합 | SQLite의 수집 완료 숫자 조회, 현금소진·런웨이·희석 리스크. 자료가 없으면 보류 | `FinancialAssessment` |
 | 투자 판단 | 아니오 | 결정론적 가중치와 red flag를 적용하고 근거가 있는 이유만 합성 | `InvestmentDecision` |
 | 보고서 생성 | 아니오 | 앞 단계 결과와 raw evidence로 5페이지 보고서 생성 | `InvestmentReport` |
 
@@ -276,6 +277,7 @@ class InvestmentState(TypedDict):
     query: str
     as_of_date: str
     candidate_companies: list[CompanyRef]
+    current_index: int
     current_company: CompanyRef | None
     company_profile: CompanyProfile | None
 
@@ -291,6 +293,10 @@ class InvestmentState(TypedDict):
     missing_facts: list[MissingFact]
     scores: dict[str, ScoreDetail]
     decision: InvestmentDecision | None
+    decision_reason: str
+    conditions: list[str]
+    evaluated_companies: Annotated[list[EvaluatedCompany], operator.add]
+    remaining_candidates: bool
     report: InvestmentReport | None
 
     query_rewrite_count: int
@@ -299,51 +305,43 @@ class InvestmentState(TypedDict):
     errors: Annotated[list[NodeError], operator.add]
 ```
 
-`operator.add` reducer는 병렬 조사 결과를 덮어쓰지 않고 합치는 데 사용한다. 다만 동일 evidence ID는 fan-in 직후 결정론적으로 중복 제거한다.
+`operator.add` reducer는 병렬 조사 결과를 덮어쓰지 않고 합치는 데 사용한다. 다만 동일 evidence ID는 fan-in 직후 결정론적으로 중복 제거한다. 누적 필드는 후보가 바뀔 때 비우지 않고 모든 레코드에 `company_id`를 넣으며, 판단과 보고서 단계에서 현재 기업 ID로 필터링한다.
 
 ### 그래프
 
 ```mermaid
 flowchart TD
-    S([START]) --> A[접수·분류]
-    A --> B{등록 기업인가?}
-    B -- 아니오 --> X[지원 범위 안내]
-    B -- 예 --> P[회사별 Send fan-out]
-
-    P --> T[기술 조사]
-    P --> M[시장·경쟁 조사]
-    P --> F[재무·자금수요 조사]
-
-    T --> Q[증거 품질·관련성 검사]
-    M --> Q
-    F --> Q
-
-    Q --> R{근거 충분?}
-    R -- 재작성 1회 --> W[질의 재작성]
-    W --> T
-    W --> M
-    W --> F
-    R -- 불충분 --> U[미확인 항목 등록]
-    R -- 충분 --> C[모순·수치·시점 감사]
-    U --> C
-
-    C --> D[가중치 점수·투자 판단]
-    D --> G[보고서 생성]
-    G --> H{인용·근거성 통과?}
-    H -- 1회 수정 --> G
-    H -- 통과/한도 --> E([END])
-    X --> E
+    S([START]) --> A[A 접수·분류]
+    A --> D[D 재무·자금수요]
+    D --> FG{재무제표 확보?}
+    FG -- 예 --> B[B 기술 조사]
+    FG -- 예 --> C[C 시장·경쟁 조사]
+    FG -- 아니오 --> E[E 투자 판단]
+    B --> Q[증거 품질·모순 감사]
+    C --> Q
+    Q --> E
+    E --> R{투자 적격 또는 후보 소진?}
+    R -- 예 --> F[F 보고서 생성]
+    R -- 아니오 --> N[next_candidate]
+    N --> A
+    F --> H{인용·근거성 통과?}
+    H -- 1회 수정 --> F
+    H -- 통과/한도 --> X([END])
 ```
+
+정본 실행 순서는 `A → D → (B ∥ C) → E → F`다. D에서 최근 사업연도의 총자산과 당기순손익 또는 매출을 확보하지 못하면 B와 C를 실행하지 않고 E로 보내 `추가 실사`로 판정한다. 수집 단계는 미리 내려받은 DART → 금융위원회 기업재무정보 → KIND 파일 순서로 빈 필드를 채워 SQLite에 저장하고, 실행 중인 D는 이 로컬 데이터만 읽는다. 투자 라운드·투자자·누적 투자금처럼 정형 자료에 없는 항목은 사전에 색인한 문서 RAG로 보완한다.
+
+E는 `투자` 또는 `조건부 투자`를 찾으면 F로 종료하고, `추가 실사` 또는 `투자 제외`이면 다음 후보로 이동한다. 마지막 후보까지 적격 기업이 없으면 F가 `evaluated_companies`로 기업별 판정과 탈락 사유를 요약한다. `current_index`가 단조 증가하므로 후보가 모두 부적격이어도 루프가 종료된다.
 
 ### 구현 규칙
 
-- 조사 노드는 `Send`로 병렬 실행한다.
+- B와 C만 같은 superstep에서 병렬 실행한다. D는 반드시 그보다 먼저 끝나야 한다.
 - 라우팅과 출력은 `with_structured_output(PydanticModel)`을 사용한다.
 - 문자열 JSON을 직접 파싱하지 않는다.
 - 모든 루프는 상태 카운터와 recursion limit를 함께 둔다.
-- 검색 실패는 빈 문자열이 아니라 `MissingFact(reason, attempted_queries, sources_checked)`를 반환한다.
+- 검색 실패는 빈 문자열이 아니라 `MissingFact(reason, attempted_queries, sources_checked)`를 반환하고, 사유를 `not_found`, `not_disclosed`, `not_applicable`, `confirmed_absent`, `unknown` 중 하나로 정규화한다.
 - 노드 예외는 전체 실행을 즉시 잃지 않도록 typed error로 기록하되, 필수 자료 누락은 투자판단을 `추가 실사`로 제한한다.
-- 체크포인트는 PostgreSQL에 저장하고 `run_id`, 모델, prompt 버전, index 버전을 고정한다.
+- 체크포인트는 SQLite에 저장하고 `run_id`, 모델, prompt 버전, index 버전을 고정한다.
 
 ## 9. 투자 평가 로직
 
@@ -354,16 +352,33 @@ PDF의 여섯 평가축을 아래와 같이 수치화한다. 가중치는 프로
 | 창업팀 역량·시장 적합성 | 15 | 이 문제를 풀 고유 경험과 HW/SW 실행력이 있는가 |
 | 시장 매력도 | 15 | 충분히 크고 성장하며 지금 진입할 이유가 있는가 |
 | 제품·기술 경쟁력 | 25 | 실제 환경에서 문제를 해결하며 재현 가능한가 |
-| 시장 검증·사업 성과 | 15 | 유료 계약, 반복 구매, 확장 계약이 있는가 |
-| 지속 가능한 경쟁우위 | 15 | 특허, 데이터, 제조 노하우, 전환비용이 방어 가능한가 |
+| 시장 검증·사업 성과 | 20 | 유료 계약, 반복 구매, 확장 계약이 있는가 |
+| 지속 가능한 경쟁우위 | 10 | 특허, 데이터, 제조 노하우, 전환비용이 방어 가능한가 |
 | 확장성·제품당 수익성 | 15 | 생산량 증가 시 마진과 서비스 비용이 개선되는가 |
 
-### 판단 기준
+### 근거 등급 기반 채점
 
-- `투자`: 80점 이상, confidence 0.75 이상, 치명적 red flag 없음
-- `조건부 투자`: 70점 이상이며 명시 조건 1~3개 충족 필요
-- `추가 실사`: 자료 충족률이 낮거나 핵심 수치·안전·재무가 미확인
-- `투자 제외`: 55점 미만 또는 치명적 red flag 확인
+각 항목은 1~5점이며 `가중 점수 = 항목 점수 / 5 × 가중치`로 계산한다. 점수 상한은 근거 수준이 결정한다.
+
+| 점수 | 필요한 근거 |
+|---:|---|
+| 5 | A·B 등급의 제3자 독립 검증 정량 근거 |
+| 4 | 회사 공개 정량 근거와 일부 외부 확인 |
+| 3 | C 등급 중심의 정성 근거 또는 부분 수치 |
+| 2 | 회사 주장만 존재하거나 D 등급 정황만 존재 |
+| 1 | 근거가 없거나 반대 근거가 우세 |
+
+E 등급의 미래 목표와 출시 예정 사양은 로드맵에는 표시하지만 현재 점수에는 사용하지 않는다. 동일 보도자료의 재배포 기사는 `source_event_id`가 같으면 독립 증거 한 건으로만 센다.
+
+### 판정 기준
+
+아래 규칙을 위에서부터 적용하고 최초로 일치하는 결과를 채택한다.
+
+1. 재무제표 미확보 → `추가 실사`
+2. `not_found` 또는 `not_disclosed`인 평가 항목이 3개 이상 → `추가 실사`
+3. 6개 항목 모두 3점 이상이고 총점 75점 이상 → `투자`
+4. 5개 이상 항목이 3점 이상이며 제품·기술 경쟁력이 3점 이상 → `조건부 투자`
+5. 그 외 → `투자 제외`
 
 ### 점수와 confidence 분리
 
@@ -372,7 +387,7 @@ PDF의 여섯 평가축을 아래와 같이 수치화한다. 가중치는 프로
 - `score`: 확인된 근거가 가리키는 투자 매력도
 - `confidence`: 필수 질문 충족률, 독립 검증률, 증거 품질, 상충 미해결률
 
-필수 재무자료가 없으면 점수가 높아도 `투자`로 자동 승격하지 않고 `추가 실사` 또는 `조건부 투자`로 제한한다.
+confidence는 판정 규칙을 대체하지 않는 보조 정보다. 필수 재무자료가 없으면 점수와 confidence를 계산해 투자로 승격하지 않고 항상 `추가 실사`로 제한한다.
 
 ## 10. 보고서 설계
 
@@ -392,22 +407,29 @@ PDF의 여섯 평가축을 아래와 같이 수치화한다. 가중치는 프로
 
 작성 순서는 상세 분석 → 투자 판단 → REFERENCE → SUMMARY다. 각 핵심 문장에는 `[EVD-...]`를 붙이고, 보고서 생성 후 citation checker가 존재 여부와 source locator를 확인한다.
 
-## 11. API와 실행 인터페이스
+## 11. Python 실행 인터페이스
 
-### 주요 API
+웹 API 없이 하나의 Python 패키지와 CLI로 실행한다. CLI는 얇은 입출력 계층이며 실제 로직은 `services/`의 Python 함수로 제공해 테스트와 노트북에서도 재사용한다.
 
-| Method | Endpoint | 기능 |
+| 명령 | 기능 | 주요 출력 |
 |---|---|---|
-| `POST` | `/api/v1/ingestion/jobs` | 승인 manifest 수집·색인 시작 |
-| `GET` | `/api/v1/ingestion/jobs/{job_id}` | 진행·실패·검수 대기 상태 |
-| `GET` | `/api/v1/companies` | 등록 기업과 기준일 목록 |
-| `POST` | `/api/v1/analysis/runs` | 투자 분석 실행 |
-| `GET` | `/api/v1/analysis/runs/{run_id}` | 노드 진행, 경고, 결과 조회 |
-| `GET` | `/api/v1/reports/{run_id}` | Markdown/JSON 보고서 조회 |
-| `GET` | `/api/v1/evidence/{evidence_id}` | 주장, 원문, 위치, 점수 확인 |
-| `POST` | `/api/v1/evaluations/rag` | 고정 평가셋 실행 |
+| `uv run skala-rag ingest --manifest configs/companies/robros.yaml` | 승인 문서 파싱·증거 추출·로컬 색인 | SQLite DB, BM25 corpus, FAISS index |
+| `uv run skala-rag companies` | 등록 기업과 기준일 조회 | 터미널 표 또는 JSON |
+| `uv run skala-rag analyze --company robros --as-of 2026-09-30` | 투자 분석 그래프 실행 | `run_id`, 판정, 보고서 경로 |
+| `uv run skala-rag evidence EVD-ID` | 증거와 원문 위치 확인 | claim, grade, locator |
+| `uv run skala-rag evaluate --dataset evals/questions.jsonl` | 고정 평가셋 실행 | 품질 지표 JSON |
 
-`POST /analysis/runs`는 처음부터 동기 응답으로 오래 기다리게 하지 않고 `202 + run_id`를 반환한다. CLI 데모는 같은 service layer를 호출해 `uv run python -m app.cli analyze --company robros` 형태로 제공한다.
+Python 코드에서는 다음처럼 동일한 service를 직접 호출한다.
+
+```python
+from skala_rag.services.analysis import analyze_company
+
+result = analyze_company(company_id="robros", as_of_date="2026-09-30")
+print(result.decision.decision)
+print(result.report_path)
+```
+
+모든 결과는 `storage/runs/{run_id}/` 아래에 `state.json`, `retrieval.jsonl`, `report.md`로 남긴다. 긴 작업도 별도 job server를 두지 않고 동기 실행하며, 진행 상황은 Python logging으로 표시한다.
 
 ## 12. 디렉터리 구조
 
@@ -417,7 +439,6 @@ skala-rag-pipeline/
 ├── pyproject.toml
 ├── uv.lock
 ├── .env.example
-├── docker-compose.yml
 ├── docs/
 │   ├── implementation-design.md
 │   ├── data-dictionary.md
@@ -425,11 +446,14 @@ skala-rag-pipeline/
 ├── configs/
 │   ├── companies/
 │   ├── prompts/
-│   └── opensearch/
+│   └── settings.yaml
 ├── src/skala_rag/
-│   ├── api/
 │   ├── cli.py
 │   ├── core/
+│   ├── services/
+│   │   ├── ingestion.py
+│   │   ├── analysis.py
+│   │   └── evaluation.py
 │   ├── ingestion/
 │   │   ├── loaders/
 │   │   ├── parsers/
@@ -438,7 +462,9 @@ skala-rag-pipeline/
 │   │   └── indexer.py
 │   ├── retrieval/
 │   │   ├── hybrid.py
-│   │   ├── sql.py
+│   │   ├── sqlite.py
+│   │   ├── bm25.py
+│   │   ├── vector.py
 │   │   ├── reranker.py
 │   │   └── context_builder.py
 │   ├── agents/
@@ -456,7 +482,7 @@ skala-rag-pipeline/
 │   ├── repositories/
 │   ├── evaluation/
 │   └── security/
-├── migrations/
+├── migrations/            # SQLite schema 버전
 ├── scripts/
 ├── tests/
 │   ├── unit/
@@ -465,7 +491,9 @@ skala-rag-pipeline/
 │   └── evaluation/
 ├── storage/
 │   ├── raw/          # git 제외
-│   └── reports/      # 예시 결과만 선택적으로 추적
+│   ├── db/            # SQLite 파일
+│   ├── indexes/       # BM25·FAISS 인덱스
+│   └── runs/          # 실행별 state·log·report
 └── evals/
     ├── questions.jsonl
     └── expected_routes.jsonl
@@ -488,11 +516,11 @@ skala-rag-pipeline/
 - `PDFRetrievalChain`은 `source_uri`를 문자열로 받지만 `load_documents`는 리스트를 순회한다. 그대로 실행하면 문자열의 각 문자를 파일 경로로 처리할 수 있다.
 - `PDFRetrievalChain.__init__`이 `super().__init__(**kwargs)`를 호출하지만 부모 생성자는 인자를 받지 않는다.
 - 확장자 없는 PDF는 PDF가 맞아도 거부한다. MIME type과 magic bytes로 판별해야 한다.
-- FAISS의 `allow_dangerous_deserialization=True`는 신뢰되지 않은 인덱스에 사용하면 안 된다.
+- FAISS 인덱스 파일은 신뢰된 로컬 산출물만 `read_index`로 읽는다.
 - `format_docs`는 모든 문서에 `source`, `page`가 있다고 가정한다. 문서 유형별 locator 모델이 필요하다.
 - 단순 similarity top-k는 제품명·특허번호·정확한 수치 검색과 반대 증거 균형을 보장하지 않는다.
 - notebook 예제의 수동 JSON parsing 대신 Pydantic structured output을 사용해야 한다.
-- `MemorySaver`는 재시작과 다중 worker 환경에 적합하지 않으므로 PostgreSQL checkpointer로 교체한다.
+- 메모리 전용 checkpointer는 실행 종료 후 상태가 사라지므로 SQLite checkpointer로 교체한다.
 - 숫자가 출처에 존재하는지만 검사하는 grounding은 단위·기간·주어가 바뀐 오류를 잡지 못한다. `numeric_facts`와 claim-level entailment를 함께 검사한다.
 
 ## 14. 보안과 안전
@@ -500,8 +528,8 @@ skala-rag-pipeline/
 - 검색 문서의 지시문은 데이터로만 취급하고 시스템 지시로 실행하지 않는다.
 - 수집 URL은 허용 scheme, DNS/IP, 최대 크기, timeout을 검사해 SSRF를 방지한다.
 - 원문·인덱스·보고서 권한을 분리하고 유료 자료는 라이선스 상태로 필터링한다.
-- LLM이 임의 SQL을 DB에 직접 실행하지 않게 한다. MVP는 allowlisted repository query를 우선 사용한다.
-- Text-to-SQL이 필요한 경우 read-only 계정, SELECT 단일문, table allowlist, timeout, row limit를 강제한다.
+- LLM이 임의 SQL을 SQLite에 직접 실행하지 않게 한다. MVP는 allowlisted repository 함수만 사용한다.
+- Text-to-SQL은 MVP에서 제외한다. 숫자 조회는 타입이 지정된 repository 메서드로만 수행한다.
 - PII와 연구자 개인 연락처는 색인 전 제거한다.
 - prompt, 모델, 임베딩, index 버전과 입력 evidence ID를 실행 로그에 남긴다.
 - 최종 투자 판단은 사람 검수 전까지 `draft` 상태로 표시한다.
@@ -520,16 +548,16 @@ skala-rag-pipeline/
 
 ### 코드 테스트
 
-- 단위: parser, entity resolver, evidence scorer, SQL guard, decision rules
-- 통합: PDF/HTML → DB/OpenSearch → hybrid retrieval
+- 단위: parser, entity resolver, evidence scorer, SQLite repository, decision rules
+- 통합: PDF/HTML → SQLite/BM25/FAISS → hybrid retrieval
 - 그래프: 각 branch, retry 한도, 일부 에이전트 실패, checkpoint resume
 - golden: 고정 회사·기준일에서 동일한 evidence set과 결정 schema 생성
-- 보안: prompt injection corpus, 악성 URL, 다중 SQL, 권한 없는 문서 필터
+- 보안: prompt injection corpus, 악성 URL, 비허용 파일 경로, 권한 없는 문서 필터
 
 ### 완료 기준
 
-- 한 명령으로 인프라를 시작하고 sample 기업을 색인할 수 있다.
-- 한 명령 또는 API 호출로 실제 투자보고서가 생성된다.
+- `uv sync` 후 별도 서버 없이 sample 기업을 색인할 수 있다.
+- CLI 명령 또는 Python 함수 호출로 실제 투자보고서가 생성된다.
 - 모든 핵심 주장과 수치가 evidence ID에서 원문 위치까지 추적된다.
 - 재시도 루프가 상한 내 종료되고 실패 원인이 보고서에 표시된다.
 - 보고서가 5페이지 구조, 네 가지 투자 의견, REFERENCE 종료 규칙을 지킨다.
@@ -539,23 +567,25 @@ skala-rag-pipeline/
 
 ### 1단계 - 실행 골격
 
-- `pyproject.toml`, 설정, Docker Compose, FastAPI health endpoint
-- PostgreSQL migration과 OpenSearch index template
+- `pyproject.toml`, CLI entry point, 로컬 설정 로더
+- SQLite schema migration과 저장 경로 초기화
 - 공통 Pydantic 모델, repository, structured logging
 
 ### 2단계 - 수집과 검색
 
-- PDF/HTML/API loader와 원문 스냅샷
+- PDF/HTML/JSON loader와 원문 스냅샷
 - 회사·제품·인물 정규화, claim/numeric fact 추출
-- 중복·버전 처리, Qwen 임베딩, hybrid retrieval
+- 중복·버전 처리, Qwen 임베딩, BM25 + FAISS hybrid retrieval
 - 회사 한 곳의 40~80개 청크 golden dataset 완성
 
 ### 3단계 - 그래프와 에이전트
 
-- 접수·분류와 세 조사 에이전트
-- `Send` 병렬 실행, fan-in, relevance/rewrite/missing 분기
+- 접수·분류 → 재무 게이트 → 기술·시장 병렬 조사 순서 구현
+- 미리 내려받은 DART → 금융위 → KIND 자료의 필드 단위 순차 보완과 투자정보 RAG 결합
+- B·C 병렬 실행, fan-in, relevance/rewrite/missing 분기
 - 모순·수치 감사, 점수·confidence, 네 가지 투자판단
-- PostgreSQL checkpoint와 실행 상태 API
+- 후보 순회와 후보 소진 종료 경로
+- SQLite checkpoint와 실행 상태 파일 저장
 
 ### 4단계 - 보고서와 품질
 
@@ -569,12 +599,62 @@ skala-rag-pipeline/
 첫 수직 슬라이스는 기업 하나와 질문 하나를 끝까지 통과시키는 것이다.
 
 1. 로브로스의 승인 문서 12~20개를 manifest로 등록한다.
-2. 원문 → evidence claim → OpenSearch/PostgreSQL 색인을 완성한다.
+2. 원문 → evidence claim → FAISS 인덱스·PostgreSQL 저장을 완성한다.
 3. 기술 에이전트 하나만 먼저 구현한다.
 4. 근거 ID가 포함된 기술 평가 결과를 만든다.
-5. 시장·재무 에이전트를 병렬로 추가한다.
-6. 투자 판단과 5페이지 보고서를 연결한다.
-7. 동일 입력에서 evidence set이 안정적으로 재현되는지 평가한다.
+5. 시장 에이전트를 추가하고 기술·시장 노드를 병렬 연결한다.
+6. 원 보고서의 1~5점 채점과 우선순위 판정 규칙을 구현한다.
+7. 후보 순회, 5페이지 보고서, 인용 검사를 연결한다.
+8. 동일 입력에서 evidence set과 판정이 안정적으로 재현되는지 평가한다.
 
 이 순서가 데이터 파이프라인, 검색 품질, 에이전트 협업, 보고서 재현성을 가장 빠르게 동시에 검증한다.
 
+## 18. 현재 저장소와 목표 설계의 차이
+
+현재 코드는 의존성을 주입한 6개 에이전트와 병렬 evidence 병합을 검증하는 초기 골격이다. 다음 차이를 해소해야 보고서 설계와 일치한다.
+
+| 영역 | 현재 상태 | 목표 상태 |
+|---|---|---|
+| 실행 순서 | 분류 → 기술·시장 → 재무 → 판단 → 보고서 | 분류 → 재무 → 기술·시장 → 판단 → 보고서 |
+| 재무 게이트 | 없음 | 재무제표 미확보 시 기술·시장 생략 후 추가 실사 |
+| 후보 처리 | 단일 기업 | `current_index` 기반 사전 후보 순회와 소진 종료 |
+| 증거 모델 | 최소 필드 | 회사·수치·조건·기준일·독립성·이벤트·버전 추적 |
+| 검색 | 인터페이스만 존재 | 로컬 BM25 + FAISS + RRF, stance별 quota |
+| 재무 조회 | 단일 analyzer | 수집 시 DART → 금융위 → KIND 순차 보완, 실행 시 SQLite 조회 + funding RAG |
+| 판단 | 외부 callable에 위임 | 6개 평가축, 근거 등급 상한, 우선순위 규칙의 결정론적 계산 |
+| 보고서 감사 | 없음 | citation completeness 100%, 숫자·단위·기간 대조 |
+
+따라서 다음 코드 변경의 우선순위는 `FinancialAssessment.status`와 값별 provenance 추가 → `route_after_financial` 구현 → B·C fan-out/fan-in 재배치 → 판정 규칙 함수화 → 후보 루프 추가 순서다.
+
+## 19. 로컬 실행 시퀀스와 완료 조건
+
+### 오프라인 수집·색인
+
+1. 승인된 source manifest를 읽고 원문과 해시를 저장한다.
+2. PDF/HTML/JSON을 파싱하고 페이지·표·원문 위치를 보존한다.
+3. 회사·제품·버전·기준일을 정규화한다.
+4. 검증 가능한 주장과 숫자·시험조건을 추출한다.
+5. 동일 source event, 문서 중복, superseded 버전을 표시한다.
+6. 사람 검수 후 SQLite, BM25 corpus, FAISS index에 반영한다.
+7. 고정 평가셋으로 embedding 및 retrieval 버전을 승인한다.
+
+### 로컬 투자 분석
+
+1. A가 사전 등록 후보와 Physical AI 유형을 조회한다.
+2. D가 SQLite의 수집 완료 재무 필드를 조회하고 funding evidence만 RAG로 보완한다.
+3. 재무 게이트 통과 시 B와 C가 회사·등급·기준일 필터를 사용해 병렬 검색한다.
+4. 검색 결과를 stance별 quota로 구성하고 evidence ID를 부여한다.
+5. fan-in 뒤 중복, 모순, 수치·기간·제품 버전을 감사한다.
+6. E가 결정론적 점수와 우선순위 규칙으로 판정한다.
+7. 적격 기업이면 F가 보고서를 만들고, 아니면 다음 후보로 반복한다.
+8. citation checker가 모든 핵심 주장과 수치를 검증한 뒤 최종 보고서를 공개한다.
+
+### MVP 완료 조건
+
+- 재무제표 미확보 기업에서 B·C 호출이 발생하지 않는다.
+- B·C 동시 쓰기에도 evidence가 손실되지 않고 중복 ID가 제거된다.
+- 모든 수치·핵심 주장에 유효한 evidence ID와 원문 locator가 있다.
+- 자료 부재가 5개 상태 중 하나로 표현되고 생성 모델이 값을 추정하지 않는다.
+- 판정 규칙의 경계값과 우선순위가 단위 테스트로 고정된다.
+- 마지막 후보까지 부적격인 경우에도 유한 시간 안에 요약 보고서로 종료한다.
+- 평가 질문 50개에서 Context Precision 0.70 이상, Faithfulness 0.85 이상, 출처 연결률 100%를 달성한다.
