@@ -56,3 +56,29 @@ result = graph.invoke(
 uv sync --group dev
 uv run pytest -q
 ```
+
+## 자료 임베딩과 FAISS 검색
+
+Qwen3-Embedding-0.6B으로 Markdown, JSON, JSONL, PDF 자료를 임베딩하고
+FAISS `IndexIDMap2(IndexFlatIP)`와 SQLite 메타데이터를 함께 생성합니다.
+
+```bash
+HF_HOME=storage/models uv run skala-rag index build \
+  --source storage/raw/자료조사 \
+  --output storage/indexes/qwen3-0.6b-v1 \
+  --version qwen3-0.6b-v1 \
+  --device auto
+```
+
+검색 예시:
+
+```bash
+HF_HOME=storage/models uv run skala-rag index search \
+  --index storage/indexes/qwen3-0.6b-v1 \
+  --query "로브로스의 핵심 로봇 기술과 특허" \
+  --company-id company-01 \
+  --top-k 5
+```
+
+색인은 `evidence.faiss`, `metadata.sqlite3`, `manifest.json`으로 구성됩니다.
+manifest에는 임베딩 모델·차원·청크 수와 인덱스 파일 체크섬이 기록됩니다.
