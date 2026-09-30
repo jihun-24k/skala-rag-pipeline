@@ -12,7 +12,6 @@ Physical AI 스타트업을 대상으로 출처와 불확실성을 추적하면�
 
 ## LangGraph 워크플로
 
-<<<<<<< HEAD
 현재 구현된 그래프는 다음 순서로 실행됩니다.
 
 ```text
@@ -66,72 +65,3 @@ uv run pytest -q
 A 에이전트의 입력·출력, 신규 기업 조사 경로와 실제 10개사 자료 연결 방법은 [시장분류 에이전트 안내](src/skala_rag/agents/market_classification/README.md)에 정리했습니다. 현재 기업 마스터는 `../자료조사/data/company_master.json`에 있으며, 다른 위치에서 실행할 때는 `SKALA_RESEARCH_ROOT`를 설정합니다.
 
 C의 실행 방법, 모델 연결, 산업 공통 자료 입력 양식은 [시장·경쟁 에이전트 안내](src/skala_rag/agents/market_competition/README.md)에 정리했습니다. 기본 실행은 로컬 자료 검색이며, 구조화 생성 모델을 주입하면 인용을 포함한 분석 초안을 반환합니다.
-=======
-Python 3.11 이상과 `uv`를 기준으로 한다.
-
-```bash
-uv sync --extra dev
-cp .env.example .env
-uv run python -m financial_agent.main
-uv run pytest
-```
-
-`financial_agent.main`은 외부 API 없이 DART → FSC → KIND 보완 흐름을 확인하는
-mock 실행 경로다. 실제 키는 `.env`에서 읽으며 secret은 소스에 저장하지 않는다.
-
-## Financial Agent 실행
-
-외부 API를 호출하지 않는 구조 검증용 mock 실행:
-
-```bash
-uv run python -m financial_agent.main --mode mock --company-name 로브로스
-```
-
-`.env`의 DART/FSC 키와 KIND 공개 검색을 사용하는 실제 공개자료 조회:
-
-```bash
-uv run python -m financial_agent.main --mode live --company-name 로브로스
-```
-
-최종 출력은 `financial_data` 한 개의 객체이며 재무값, `evidence_ids`,
-`missing_facts`, `as_of`, `status`를 포함한다. `live` 모드여도 비상장 기업에
-공개 재무제표가 없으면 값을 추정하지 않고 결측값으로 반환한다.
-
-- FSC는 기업 재무 요약, 상세 손익계산서(`getIncoStat_V2`), 상세 재무상태표를 조회한다.
-- KIND는 별도 키 없이 공개 통합검색 HTML과 공시 뷰어를 조회한다. 검색 결과는
-  `KindClient.search_investment_filings()`, 원문은 `KindClient.get_document()`로 가져온다.
-
-## Python 코드에서 사용
-
-단일 기업은 기업명만 전달할 수 있다.
-
-```python
-from financial_agent import get_financial_data
-
-financial_data = get_financial_data("로브로스")
-```
-
-여러 기업은 하나의 Agent와 API 클라이언트를 재사용하는 배치 함수를 사용한다.
-
-```python
-from financial_agent import get_financial_data_batch
-
-results = get_financial_data_batch(["로브로스", "삼성전자", "현대자동차"])
-loboros = results["로브로스"]
-```
-
-동명이거나 이미 식별번호를 알고 있으면 `CompanyRef`를 전달한다.
-
-```python
-from financial_agent import CompanyRef, get_financial_data_batch
-
-results = get_financial_data_batch([
-    CompanyRef(
-        company_id="loboros",
-        company_name="로브로스",
-        corporation_number="1341110561072",
-        dart_corp_code="02052432",
-    )
-])
-```
->>>>>>> 0df6358 (feat: DART·FSC·KIND 연동 재무 분석 에이전트 구현)
