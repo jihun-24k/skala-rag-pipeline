@@ -63,6 +63,16 @@ class MarketCategory(DomainModel):
     analysis_scope: list[str] = Field(default_factory=list)
 
 
+class RagEvaluation(DomainModel):
+    """B의 검색 순위와 생성 문장에 대한 정답 문서 없는 평가 결과."""
+
+    context_precision: float | None = Field(default=None, ge=0.0, le=1.0)
+    faithfulness: float | None = Field(default=None, ge=0.0, le=1.0)
+    context_precision_by_stance: dict[str, float] = Field(default_factory=dict)
+    judged_contexts: int = Field(ge=0)
+    judged_claims: int = Field(ge=0)
+
+
 class TechAssessment(DomainModel):
     product_summary: str
     core_technology: list[str] = Field(default_factory=list)
@@ -74,6 +84,7 @@ class TechAssessment(DomainModel):
     team: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     missing_facts: list[MissingFact] = Field(default_factory=list)
+    rag_evaluation: RagEvaluation | None = None
 
 
 class MarketAssessment(DomainModel):
