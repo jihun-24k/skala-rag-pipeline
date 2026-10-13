@@ -274,7 +274,7 @@ def test_evaluation_writer_supplies_full_evidence_and_rewrite_instructions():
     assert payload['evidence'][1]['source_uri'] == EVIDENCE[1].source_uri
     assert len(payload['research_perspectives'][0]['findings']) == 2
     assert payload['instructions'] == ['무게의 상충을 설명']
-    assert '시험 과제·조건·결과' in instruction and '근거가 부족하면' in instruction
+    assert '시험 과제·조건·비교 수치·결과·의미' in instruction and '근거가 부족하면' in instruction
     assert report.analysis_revision == 2
 
 
@@ -371,7 +371,7 @@ def test_business_rubric_separates_missing_positive_and_negative():
     assert positive.business_assessment.coverage_percent == 75
     assert positive.business_assessment.observed_score == 80
     unknown = assess([None,None,4,None,None,None])
-    assert unknown.business_assessment.signal == 'undetermined'
+    assert unknown.business_assessment.signal == 'positive'
     assert unknown.business_assessment.coverage_percent == 25
     negative = assess([2,2,1,1,2,2], 'contradict')
     assert negative.business_assessment.signal == 'concern'
@@ -414,12 +414,105 @@ def test_investment_traffic_light_preserves_missing_scores(tmp_path):
             for k,v in [('team',4),('market',3),('technology',2),('traction',None)]],
         business_assessment=BusinessAssessment(observed_score=60,coverage_percent=55,reason="검증용 판단 유보"))
     before = report.model_dump()
-    assert '통과 1/6항목' in investment_snapshot(report)
+    assert '/6항목' not in investment_snapshot(report)
     table = business_score_table(report)
-    for label in ['초록 · 통과','노랑 · 부분 충족','빨강 · 미충족','노랑 · 미확인']:
+    for label in ['통과','부분 충족','미충족','미평가']:
         assert label in table
     pdf = render_evaluation_pdf(report,tmp_path/'signals.pdf')
     text = '\n'.join(p.extract_text() for p in PdfReader(pdf).pages)
-    assert text.index('종합 투자평가') < text.index('SUMMARY')
+    assert text.index('확인된 항목 기준') < text.index('SUMMARY')
     assert '60/100점' in text and '55%' in text
     assert report.model_dump() == before
+
+
+def test_neutral_cited_records_allow_partial_score_without_changing_stance():
+    from skala_rag.models.orchestration import EvaluationReport, BusinessScore
+    from skala_rag.agents.report import assess_business_report
+    evidence = ev('source', '회사 발표: 연구용 로봇 공급', stance='unknown')
+    report = EvaluationReport(summary='fixture', perspectives=[], analysis_revision=1,
+        business_scores=[BusinessScore(criterion='market',score=4,rationale='회사 발표 기반 수요',evidence_ids=['source'])])
+    result = assess_business_report(report, {'source':evidence})
+    market = next(i for i in result.business_scores if i.criterion=='market')
+    assert market.score == 3 and market.evidence_ids == ['source']
+    assert evidence.stance == 'unknown'
+    assert next(i for i in result.business_scores if i.criterion=='team').score is None
+    report.business_scores[0].evidence_ids = ['invented']
+    invalid = assess_business_report(report, {'source':evidence})
+    assert next(i for i in invalid.business_scores if i.criterion=='market').score is None
+
+
+def test_reference_formats_preserve_missing_metadata_and_real_authorship():
+    from skala_rag.agents.report import format_evidence_reference
+    e = ev('paper','저자: 김철수\n학술지명: 투자연구\n권: 10\n호: 2\n페이지: 50-60',stype='paper')
+    e.source_title='인공지능 산업 전망'
+    from datetime import date
+    e.published_at=date(2024,1,1)
+    assert format_evidence_reference(e)=='김철수(2024). 인공지능 산업 전망. *투자연구*, 10(2), 50-60. '
+    e.claim_text='정량 결과가 포함된 논문'
+    assert '저자 미확보' in format_evidence_reference(e)
+    assert '학술지명 미확보' in format_evidence_reference(e)
+
+
+def test_reference_report_and_web_templates():
+    from skala_rag.agents.report import format_evidence_reference
+    from datetime import date
+    e = ev('report','발행기관: 한국은행',stype='report')
+    e.source_title='금융안정보고서'
+    e.published_at=date(2024,6,1)
+    assert format_evidence_reference(e)=='한국은행(2024). *금융안정보고서*. '
+    e.source_type='first_party'
+    e.claim_text='작성자: 테스트로봇\n사이트명: 테스트로봇 공식 홈페이지'
+    e.source_title='제품 소개'
+    assert format_evidence_reference(e)=='테스트로봇(2024-06-01). *제품 소개*. 테스트로봇 공식 홈페이지, '
+
+
+def test_missing_data_does_not_become_negative_score_or_non_disclosure_claim():
+    from skala_rag.agents.report import assess_business_report, normalize_report_limits
+    from skala_rag.models.orchestration import EvaluationReport, BusinessScore
+    e = ev('funding','투자 유치 실적',stance='unknown')
+    report=EvaluationReport(summary='매출은 공개되지 않았다.',perspectives=[],analysis_revision=1,
+        business_scores=[BusinessScore(criterion='traction',score=2,rationale='납품 데이터 미확보',evidence_ids=['funding'])])
+    normalized=normalize_report_limits(report)
+    assert normalized.summary=='매출은 이번 확보 자료에서 확인되지 않았다.'
+    assert report.summary=='매출은 공개되지 않았다.'
+    result=assess_business_report(normalized,{'funding':e})
+    assert next(i for i in result.business_scores if i.criterion=='traction').score is None
+    assert assess_business_report(result, {'funding':e}).business_scores == result.business_scores
+
+
+def test_score_colors_depend_only_on_score_boundaries():
+    from skala_rag.agents.report import score_signal
+    assert [score_signal(x) for x in [None,0,44.9,45,69.9,70,100]] == [
+        'undetermined','concern','concern','undetermined','undetermined','positive','positive']
+
+
+def test_limitations_are_collected_only_in_final_chapter():
+    from skala_rag.agents.report import evaluation_report_sections
+    report=build_evaluation_report(evaluation_state(), [])
+    original=report.model_dump()
+    sections=evaluation_report_sections(report)
+    before='\n'.join(text for title,text in sections if title!='13. LIMITATIONS')
+    limits=dict(sections)['13. LIMITATIONS']
+    assert '자료 범위와 한계' not in before and '자료 한계:' not in before
+    assert '장기 가동률' in limits
+    assert report.model_dump()==original
+
+
+def test_editorial_pass_preserves_scores_and_checks_outline():
+    from skala_rag.agents.report import edit_report_body
+    import pytest
+    report = build_evaluation_report(evaluation_state(), [])
+    original = report.model_dump()
+    def edit(schema, instruction, payload):
+        sections = [p.model_dump(mode='json') for p in report.sections]
+        sections[2]['findings'] = [{'text': '근거 범위 내 상세 설명', 'evidence_ids': [EVIDENCE[0].evidence_id]}]
+        return {'sections': sections}
+    result = edit_report_body(report, {e.evidence_id:e for e in EVIDENCE}, edit)
+    assert result.sections[2].findings[0].text == '근거 범위 내 상세 설명'
+    assert result.business_scores == report.business_scores
+    assert result.summary == report.summary
+    assert report.model_dump() == original
+    def bad(schema, instruction, payload):
+        return {'sections': [p.model_dump(mode='json') for p in reversed(report.sections)]}
+    with pytest.raises(ValueError, match='section order'):
+        edit_report_body(report, {e.evidence_id:e for e in EVIDENCE}, bad)

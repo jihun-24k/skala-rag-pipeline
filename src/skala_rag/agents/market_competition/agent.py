@@ -26,12 +26,13 @@ class MarketAnalysisResult(AnalysisResult[MarketAssessment]):
 class MarketCompetitionAgent:
     def __init__(self, retriever: LocalMarketRetriever | None = None,
                  generator: MarketGenerator | None = None, *, research_root: Path | None = None,
-                 top_k: int = 4):
+                 top_k: int = 4, retain_research_evidence: bool = False):
         if top_k < 1:
             raise ValueError('top_k must be positive')
         self.retriever = retriever if retriever is not None else LocalMarketRetriever(load_documents(research_root))
         self.generator = generator
         self.top_k = top_k
+        self.retain_research_evidence = retain_research_evidence
 
     def __call__(self, company_profile: CompanyProfile, market_category: MarketCategory,
                  query: str = '') -> MarketAnalysisResult:
@@ -54,6 +55,12 @@ class MarketCompetitionAgent:
         common = dict(forms=forms, as_of_date=profile.as_of_date, limit=self.top_k)
         industry = self.retriever.search(industry_query, scope='industry', company_ids=set(), **common)
         company = self.retriever.search(company_query, scope='company', company_ids={profile.company_id}, **common)
+        # Separate retrieval lanes prevent product-only hits from crowding out
+        # existing team, funding and business records. All retain the same filters.
+        for topic in ('대표 창업자 연구진 팀 논문 경력', '투자 유치 라운드 연혁 기업 기본정보',
+                      '고객 납품 계약 실증 PoC 사업 실적'):
+            company.extend(self.retriever.search(f'{profile.company_name} {topic}',
+                scope='company', company_ids={profile.company_id}, **common))
         rival_ids = set(competitor_ids or []) - {profile.company_id}
         rivals = self.retriever.search(industry_query, scope='company', company_ids=rival_ids, **common) if rival_ids else []
         chunks = list({c.chunk_id: c for c in [*industry, *company, *rivals]}.values())
@@ -108,16 +115,19 @@ class MarketCompetitionAgent:
         for claim in draft.claims:
             invalid = any(ref.chunk_id not in available or ref.quote not in available[ref.chunk_id].text
                           for ref in claim.citations)
+            invalid_reason = '생성된 인용문이 검색 원문과 일치하지 않아 해당 문장 제외; 자료 또는 실적 부재를 의미하지 않음' if invalid else ''
             if claim.topic == 'competition' and not claim.competitor_name:
                 invalid = True
+                invalid_reason = '경쟁사 이름이 없는 비교 문장 제외; 다른 실적 평가와 무관'
             if claim.topic in {'tam', 'sam', 'som'}:
                 size = claim.market_size
                 quoted = ' '.join(ref.quote for ref in claim.citations)
                 if size is None or any(value not in quoted for value in
                                        [size.value, size.unit, str(size.base_year)]):
                     invalid = True
+                    invalid_reason = '시장 규모 수치의 단위·기준연도·인용 정보 미확보; 정성적 시장 평가는 가능'
             if invalid:
-                missing.append(MissingFact(field=claim.topic, reason='인용·경쟁사명 또는 시장규모 필수 정보 검증 실패; 주장 제외'))
+                missing.append(MissingFact(field=claim.topic, reason=invalid_reason))
                 continue
             ids = []
             for ref in claim.citations:
@@ -156,6 +166,18 @@ class MarketCompetitionAgent:
         missing.extend(MissingFact(field='limitation', reason=s) for s in draft.limitations)
         if not competitors.comparisons:
             competitors.missing_facts.append(MissingFact(field='competitors', reason='인용 검증을 통과한 경쟁 비교 미확보', sources_checked=sources))
+        if self.retain_research_evidence:
+            # Invalid generated paraphrases are rejected above. Keep the original
+            # retrieved source for a subsequent author to assess, without marking
+            # that source's assertions as independently verified or positive.
+            for chunk in chunks:
+                d = chunk.document
+                eid = 'market:' + hashlib.sha256((d.document_id + '\0' + d.text).encode()).hexdigest()[:20]
+                evidence.setdefault(eid, Evidence(evidence_id=eid, claim_text=d.text,
+                    stance='unknown', source_type=d.source_type, source_grade=d.source_grade,
+                    source_uri=d.source_url, source_title=d.title, published_at=d.published_at,
+                    company_id=profile.company_id, source_event_id=d.document_id,
+                    independent=d.independent, locator=d.locator))
         market.evidence_ids = list(evidence)
         market.analysis_status = 'draft_requires_review' if market.findings else 'insufficient_evidence'
         return MarketAnalysisResult(market, list(evidence.values()), competitors)

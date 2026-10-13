@@ -16,7 +16,7 @@ class EvidenceRetriever(Protocol):
 
 class MarketRetriever(Protocol):
     def search(self, query: str, *, scope: str, company_ids: set[str],
-               forms: set[str], as_of_date: date, limit: int = 5) -> list[RetrievedChunk]: ...
+               forms: set[str], as_of_date: date, limit: int = 5, source_types: set[str] | None = None) -> list[RetrievedChunk]: ...
 
 
 class FaissMarketRetriever:
@@ -36,9 +36,10 @@ class FaissMarketRetriever:
         self.lexical = LocalMarketRetriever(documents) if augment_with_lexical else None
 
     def search(self, query: str, *, scope: str, company_ids: set[str],
-               forms: set[str], as_of_date: date, limit: int = 5) -> list[RetrievedChunk]:
+               forms: set[str], as_of_date: date, limit: int = 5, source_types: set[str] | None = None) -> list[RetrievedChunk]:
         eligible = [d for d in self.documents if d.scope == scope
                     and d.source_grade != 'E' and not d.future_plan
+                    and (not source_types or d.source_type in source_types)
                     and d.observed_at <= as_of_date
                     and (d.published_at is None or d.published_at <= as_of_date)
                     and (bool(company_ids.intersection(d.company_ids)) if scope == 'company'
@@ -72,7 +73,7 @@ class FaissMarketRetriever:
                 break
         if self.lexical is not None:
             lexical = self.lexical.search(query, scope=scope, company_ids=company_ids,
-                forms=forms, as_of_date=as_of_date, limit=limit)
+                forms=forms, as_of_date=as_of_date, limit=limit, source_types=source_types)
             # Interleave verified source lanes so vector dominance cannot hide
             # exact product names. Preserve source metadata and bound context size.
             merged, seen_sources = [], set()

@@ -167,3 +167,44 @@ def test_storage_inventory_loads_papers_and_rejects_tampering(tmp_path):
     inventory.write_text(json.dumps(item))
     with pytest.raises(ValueError, match='escapes'):
         load_documents(tmp_path)
+
+
+def test_topic_retrieval_preserves_funding_and_team_in_generator_input():
+    from skala_rag.agents.market_competition.retrieval import RetrievedChunk
+    calls = []
+    class TopicRetriever:
+        def search(self, query, **kwargs):
+            calls.append((query, kwargs))
+            if kwargs['scope'] != 'company':
+                return []
+            key = 'funding' if '투자 유치 라운드' in query else 'team' if '대표 창업자' in query else 'product'
+            d = doc(key)
+            return [RetrievedChunk(key, d, d.text, 0, 1.0)]
+    gen = Mock()
+    gen.generate.return_value = {'claims': []}
+    MarketCompetitionAgent(TopicRetriever(), gen).analyze(profile())
+    payload = gen.generate.call_args.args[0]
+    assert {c['chunk_id'] for c in payload['retrieved_context']} == {'funding','team','product'}
+    assert all(c[1]['company_ids']=={'new-company'} for c in calls if c[1]['scope']=='company')
+
+
+def test_paper_lane_keeps_company_and_date_filters():
+    docs = [doc('paper',source_type='academic'),doc('patent',source_type='patent'),
+            doc('other-paper',source_type='academic',company_ids=['other']),
+            doc('future-paper',source_type='academic',published_at='2027-01-01')]
+    hits = LocalMarketRetriever(docs).search('배송 로봇',scope='company',company_ids={'new-company'},
+        forms=set(),as_of_date=date(2026,9,30),source_types={'paper','academic'})
+    assert [c.document.document_id for c in hits] == ['paper']
+
+
+def test_original_sources_survive_rejected_paraphrase_without_becoming_positive():
+    gen = Mock()
+    gen.generate.return_value = {'claims':[{'topic':'traction','text':'가짜 매출 999억',
+        'citations':[{'chunk_id':'own#char=0','quote':'원문에 존재하지 않는 문장입니다'}]}]}
+    result = MarketCompetitionAgent(LocalMarketRetriever([doc('own')]),gen,
+        retain_research_evidence=True).analyze(profile())
+    assert not result.assessment.findings
+    assert len(result.evidence)==1
+    assert result.evidence[0].claim_text==doc('own').text
+    assert result.evidence[0].stance=='unknown'
+    assert '999' not in result.evidence[0].claim_text

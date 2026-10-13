@@ -44,12 +44,14 @@ class LocalMarketRetriever:
                     break
 
     def search(self, query: str, *, scope: str, company_ids: set[str], forms: set[str],
-               as_of_date: date, limit: int = 5) -> list[RetrievedChunk]:
+               as_of_date: date, limit: int = 5, source_types: set[str] | None = None) -> list[RetrievedChunk]:
         if limit <= 0:
             return []
         eligible = []
         for item in self._chunks:
             d = item[0]
+            if source_types and d.source_type not in source_types:
+                continue
             if d.scope != scope or d.source_grade == 'E' or d.future_plan:
                 continue
             if d.observed_at > as_of_date or (d.published_at and d.published_at > as_of_date):

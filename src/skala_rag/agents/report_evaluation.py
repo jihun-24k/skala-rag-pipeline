@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
 
 from skala_rag.models.orchestration import QualityItem, QualityVerdict, REPORT_OUTLINE
 
@@ -45,17 +44,11 @@ class ReportEvaluator:
         items.append(QualityItem(criterion='neutrality', verdict='fail' if recommended else 'pass',
             reason='특정 기술 추천·우열 표현 검토 필요' if recommended else '명시적 추천 표현 없음',
             target='F' if recommended else None))
-        sources = {evidence[eid].source_event_id or evidence[eid].source_uri
-                   for eid in ids & evidence.keys()}
-        domains = {urlsplit(evidence[eid].source_uri).hostname for eid in ids & evidence.keys()}
-        independent = any(evidence[eid].independent is True for eid in ids & evidence.keys())
-        balanced = any(evidence[eid].stance in ('contradict', 'unknown') for eid in ids & evidence.keys())
-        biased = len(sources) < 2 or len(domains) < 2 or not balanced
-        items.append(QualityItem(criterion='bias', verdict='unknown' if biased or not independent else 'pass',
-            reason='출처 편중 신호: 한계 공개와 불리한 근거 누락 여부의 의미 검증 필요' if biased else
-                '출처 분산과 반대/불확실 근거 확인' if independent else '출처 독립성의 의미 검증 필요',
-            target='C' if biased else None,
-            questions=['기업 발표와 독립적인 출처 및 불리한 근거를 추가 조사하세요.'] if biased else []))
+        # Bias is selective presentation, not a minimum number of publishers or
+        # third-party replication requirement. The semantic judge checks whether
+        # known contrary evidence and source limitations were fairly represented.
+        items.append(QualityItem(criterion='bias', verdict='pass',
+            reason='출처 수·도메인 수·independent 여부는 통과 조건이 아님; 알려진 반대 근거 누락과 출처 성격 왜곡을 의미 평가'))
         issues = []
         from skala_rag.agents.report import report_classification
         expected_classification = report_classification(state)

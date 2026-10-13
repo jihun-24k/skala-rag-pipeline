@@ -125,7 +125,7 @@ def test_evaluation_pdf_preserves_previous_report_outline(tmp_path):
     assert '투자 의견' not in text
     assert 'REFERENCE' in text
     assert '[tech]' not in text and '[market]' not in text
-    assert '[1]' in text and 'https://' not in text
+    assert '[1]' in text and 'https://university.example/paper' in text
     uris = [a.get_object().get('/A', {}).get('/URI') for page in pages for a in page.get('/Annots', [])]
     assert 'https://university.example/paper' in uris
     assert report.model_dump(mode='json') == original
@@ -539,6 +539,9 @@ def test_source_concentration_requires_semantic_review_not_automatic_failure():
                          for e in state['evidence']]
     without_judge = ReportEvaluator()(None, state)
     assert next(i for i in without_judge.items if i.criterion == 'bias').verdict == 'unknown'
+    bias = next(i for i in without_judge.items if i.criterion == 'bias')
+    assert bias.target is None and not bias.questions
+    assert '독립적인 출처' not in bias.reason
     semantic = state['quality_result'].model_copy(deep=True)
     checked = ReportEvaluator(lambda *args: semantic)(None, state)
     assert next(i for i in checked.items if i.criterion == 'bias').verdict == 'pass'
@@ -567,3 +570,20 @@ def test_output_length_error_retries_once_with_shorter_instruction():
     agents, calls = researchers(overrides={'B': truncated})
     state = run(agents)
     assert state['status'] == 'passed' and counts(calls)['B'] == 2
+
+
+def test_single_publisher_can_pass_but_wrong_citation_still_fails():
+    agents, _ = researchers()
+    state = run(agents)
+    state['evidence'] = [e.model_copy(update={'independent':False,
+        'source_uri':'https://company.example/report','source_event_id':'company-announcement',
+        'stance':'support'}) for e in state['evidence']]
+    report=state['report'].model_copy(deep=True)
+    report.references={eid:'https://company.example/report' for eid in report.references}
+    state['report']=report
+    semantic=state['quality_result'].model_copy(deep=True)
+    evaluator=ReportEvaluator(lambda *args:semantic)
+    assert evaluator(None,state).passed
+    report.references[next(iter(report.references))]='https://unrelated.example/other'
+    verdict=evaluator(None,state)
+    assert next(i for i in verdict.items if i.criterion=='groundedness').verdict=='fail'

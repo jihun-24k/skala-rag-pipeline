@@ -51,9 +51,9 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
                        fontSize=25, leading=34, spaceAfter=20))]
 
     if investment_report is not None:
-        from skala_rag.agents.report import investment_snapshot
+        from skala_rag.agents.report import investment_snapshot, score_signal
         assessment = investment_report.business_assessment
-        signal = assessment.signal if assessment else 'undetermined'
+        signal = score_signal(assessment.observed_score if assessment else None)
         ink, fill = {'positive': ('#176445', '#eaf6ee'),
                      'undetermined': ('#795600', '#fff5d5'),
                      'concern': ('#a52b32', '#fdecee')}[signal]
@@ -130,7 +130,9 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
                     if '가중치' in headers:
                         for row_index, row in enumerate(rows[1:], 1):
                             label = row[2].getPlainText()
-                            color = '#eaf6ee' if '초록' in label else '#fdecee' if '빨강' in label else '#fff5d5'
+                            match = re.match(r'([1-5])/5', label)
+                            score = int(match.group(1)) if match else None
+                            color = '#eaf6ee' if score is not None and score >= 4 else '#fdecee' if score is not None and score <= 2 else '#fff5d5'
                             table.setStyle(TableStyle([('BACKGROUND', (2, row_index), (2, row_index), colors.HexColor(color))]))
                     story.extend([KeepTogether([table]) if '가중치' in headers else table, Spacer(1, 8)])
                 in_table = False
@@ -167,9 +169,8 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
                 story.extend([financial_chart_drawing(chart, font), Spacer(1, 10)])
     bibliography = [Paragraph(reference_heading, heading)]
     for index, reference in enumerate(report.references, 1):
-        display = escape(f'[{index}] {reference}').replace('\n', '<br/>')
-        display = re.sub(r'https?://[^\s<>]+',
-            lambda m: '<link href="' + m.group(0).replace('"', '&quot;') + '" color="#24758c">원문 보기</link>', display)
+        linked = re.sub(r'https?://[^\s]+', lambda m: '[' + m.group(0) + '](' + m.group(0) + ')', reference)
+        display = inline(parser.parseInline(f'[{index}] {linked}')[0])
         bibliography.append(Paragraph(display, reference_style))
     if not report.references:
         bibliography.append(Paragraph('확인된 참고문헌 없음', body))
@@ -235,12 +236,6 @@ def render_evaluation_pdf(report, output: Path) -> Path:
     references = []
     for url, (_, eid) in sources.items():
         details = report.reference_details.get(eid, '')
-        # Internal filesystem locations stay in JSON/Markdown, not the reader's bibliography.
-        details = re.sub(r'원문 위치:.*$', '', details).replace('저자/발행기관 미확인. ', '')
-        for raw, label in {'first_party': '회사 발표', 'patent': '특허', 'paper': '논문', 'academic': '학술 자료'}.items():
-            if details.startswith(raw):
-                details = label + details[len(raw):]
-                break
         references.append(details.strip() + '\n' + url)
     carrier = InvestmentReport(summary=report.summary, technology='', market_competition='',
         financials='', risks='', decision='', references=references)
