@@ -74,16 +74,62 @@ class EvaluationSummary(DomainModel):
     analysis_revision: int = Field(ge=0)
 
 
+REPORT_OUTLINE = (
+    ('snapshot', '2. INVESTMENT SNAPSHOT'),
+    ('business', '3. BUSINESS IDEA'),
+    ('product', '4. PRODUCT & TECHNOLOGY'),
+    ('market', '5. MARKET'),
+    ('competition', '6. COMPETITION & MOAT'),
+    ('traction', '7. TRACTION'),
+    ('team', '8. TEAM'),
+    ('financials', '9. FINANCIALS'),
+    ('valuation', '10. VALUATION'),
+    ('risks', '11. KEY RISKS'),
+    ('decision', '12. INVESTMENT DECISION'),
+    ('limitations', '13. LIMITATIONS'),
+)
+
+
+class ReportSection(DomainModel):
+    key: Literal['snapshot', 'business', 'product', 'market', 'competition', 'traction',
+                 'team', 'financials', 'valuation', 'risks', 'decision', 'limitations']
+    findings: list[CitedClaim] = Field(default_factory=list)
+    missing_facts: list[MissingFact] = Field(default_factory=list)
+
+
+class FinancialChartPoint(DomainModel):
+    period: str
+    value: float = Field(allow_inf_nan=False)
+    evidence_id: str
+
+
+class FinancialChart(DomainModel):
+    metric: str
+    title: str
+    unit: str
+    statement_scope: str
+    points: list[FinancialChartPoint] = Field(min_length=2)
+
+
 class EvaluationReport(DomainModel):
+    classification: dict[str, str] = Field(default_factory=dict)
+    financial_charts: list[FinancialChart] = Field(default_factory=list)
+    company_name: str = ''
     summary: str
     perspectives: list[PerspectiveResult]
     limitations: list[str] = Field(default_factory=list)
     analysis_revision: int = Field(ge=0)
     references: dict[str, str] = Field(default_factory=dict)
+    sections: list[ReportSection] = Field(default_factory=list)
+    reference_details: dict[str, str] = Field(default_factory=dict)
+
+    @property
+    def title(self) -> str:
+        return f'{self.company_name.strip()} 평가 보고서' if self.company_name.strip() else '기업 평가 보고서'
 
 
 class QualityItem(DomainModel):
-    criterion: Literal['groundedness', 'neutrality', 'bias', 'coverage']
+    criterion: Literal['groundedness', 'neutrality', 'bias', 'format']
     verdict: Literal['pass', 'fail', 'unknown']
     reason: str
     target: Literal['B', 'C', 'D', 'E', 'F'] | None = None
@@ -96,8 +142,8 @@ class QualityVerdict(DomainModel):
 
     @model_validator(mode='after')
     def all_criteria(self):
-        if sorted(i.criterion for i in self.items) != ['bias', 'coverage', 'groundedness', 'neutrality']:
-            raise ValueError('Exactly one verdict for each of the four criteria is required')
+        if sorted(i.criterion for i in self.items) != ['bias', 'format', 'groundedness', 'neutrality']:
+            raise ValueError('Three quality criteria and the report format check are required')
         return self
 
     @property

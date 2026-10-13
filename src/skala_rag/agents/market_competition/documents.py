@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import calendar
 import re
 from datetime import date
@@ -30,6 +31,7 @@ class MarketDocument(DomainModel):
     observed_at: date
     future_plan: bool = False
     locator: str | None = None
+    independent: bool | None = None
 
     @field_validator('source_url')
     @classmethod
@@ -96,6 +98,35 @@ def load_documents(research_root: Path | None = None) -> list[MarketDocument]:
             observed_at=source.get('observed_at') or manifest['as_of_date'],
             future_plan=bool(source.get('future')), locator=locator,
         ))
+    # The storage bundle inventories papers/patents separately from source_manifest.
+    # Join only verified local canonical files; index presence is not provenance.
+    inventory = root / 'data/evidence_documents.jsonl'
+    seen = {doc.document_id for doc in docs}
+    if inventory.is_file():
+        for line in inventory.read_text(encoding='utf-8').splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if item['doc_id'] in seen:
+                continue
+            relative = item['relative_path']
+            path = (root / relative).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError('Evidence inventory path escapes research root')
+            raw = path.read_bytes()
+            expected = item.get('content_sha256')
+            if expected and hashlib.sha256(raw).hexdigest() != expected:
+                raise ValueError(f'Evidence inventory checksum mismatch: {relative}')
+            text = re.sub(r'\A---\s*\n.*?\n---\s*\n', '', raw.decode('utf-8'), count=1, flags=re.S)
+            docs.append(MarketDocument(document_id=item['doc_id'], title=item['title'], text=text,
+                source_url=item.get('original_url') or item['source_url'],
+                source_grade=item['source_grade'], source_type=item['document_type'],
+                scope='company', company_ids=[item['company_id']],
+                published_at=publication_bound(item.get('published_at')),
+                published_at_raw=item.get('published_at'), observed_at=item['observed_at'],
+                future_plan=bool(item.get('future')), locator=relative,
+                independent=item.get('independent_verification')))
+            seen.add(item['doc_id'])
     # Shared market reports and new company evidence use the same validated format.
     additional = root / 'data/market_documents.jsonl'
     if additional.exists():

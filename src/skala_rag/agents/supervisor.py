@@ -6,12 +6,12 @@ from skala_rag.models.orchestration import Limits, SupervisorDecision, VIEWS
 OWNER = {'technology': 'B', 'market': 'C', 'stakeholders': 'C', 'domain': 'B'}
 QUESTIONS = {
     'A': '기업 동일성, 제품 형태와 적용 분야를 확인하세요.',
-    'B': '기술 성숙도와 실제 도메인 적용 조건, 시험 한계·반대 근거를 조사하세요.',
-    'C': '시장 수요, 고객·운영자·규제기관의 요구와 독립 출처·반대 근거를 조사하세요.',
+    'B': '핵심 기술·제품과 실제 적용 조건, 시험 한계·반대 근거, 창업자·핵심 기술인력의 검증된 역할을 조사하세요.',
+    'C': '사업 아이디어·수익모델, 시장 규모·범위, 경쟁사·기존 대안, 유료 고객·계약과 PoC의 차이, 고객 요구와 독립 출처·반대 근거를 조사하세요.',
     'D': '기준일에 이용 가능한 재무자료와 사업 지속성의 불확실성을 확인하세요.',
     'E': '네 관점의 근거와 한계를 중립적으로 정리하세요.',
     'F': '평가 정리를 사용해 근거 ID가 연결된 중립적인 보고서를 작성하세요.',
-    'G': '근거 연결성·중립성·편향·네 관점 커버리지를 평가하세요.',
+    'G': '근거 연결성·중립성·편향을 평가하고 기존 목차·SUMMARY 반 페이지·최대 10쪽 형식을 확인하세요.',
 }
 
 
@@ -61,6 +61,8 @@ class SupervisorPolicy:
             return choose('research', ['A'], '기업 식별이 선행되어야 함')
 
         unresolved = classification_unresolved(state)
+        if unresolved:
+            return stop('기업 식별·분류 확인 필요; 보고서 작성 보류')
         if not unresolved:
             initial = [agent for agent in ('B', 'C') if not state['attempts'].get(agent)]
             if initial:
@@ -73,10 +75,10 @@ class SupervisorPolicy:
         current_quality = quality and quality.report_revision == state['report_revision']
         if current_quality and report and report.analysis_revision == revision:
             if quality.passed and not state['task_errors'] and not unresolved and state.get('research_sufficient') is not False:
-                return choose('finish', reason='네 품질 기준과 필수 작업 통과', status='passed')
+                return choose('finish', reason='세 품질 기준·보고서 형식·필수 작업 통과', status='passed')
             for issue in quality.items:
                 target = issue.target
-                if issue.verdict == 'fail' and target and available(state, target):
+                if issue.verdict in ('fail', 'unknown') and target and available(state, target):
                     if target in ('B', 'C', 'D') and (unresolved or target in state['stagnant_agents']):
                         continue
                     if target in ('B', 'C', 'D') and any(e.node == target and not e.retryable
@@ -96,6 +98,11 @@ class SupervisorPolicy:
                 return choose('research', targets, '관점별 핵심 근거 부족',
                               [f'{view} 관점의 확인되지 않은 질문을 다른 출처와 구체적인 적용 사례로 조사하세요.'
                                for view in gaps])
+
+        if state.get('research_sufficient') is False:
+            return stop('핵심 근거 충분성 미충족; 재조사 후에도 해소되지 않아 작성 보류')
+        if state['task_errors']:
+            return stop('해결되지 않은 조사 오류; 작성 보류', failed=True)
 
         summary = state.get('evaluation_summary')
         if summary is None or summary.analysis_revision != revision:
@@ -153,6 +160,8 @@ def validate_decision(decision: SupervisorDecision, state):
         if decision.action == 'retry' and not any(e.node == agent and e.retryable
                                                   for e in state['task_errors'].values()):
             raise ValueError('Retry requires a retryable task error')
+        if agent in ('E', 'F') and (state.get('research_sufficient') is False or decision.sufficient is False):
+            raise ValueError('Insufficient research cannot enter synthesis or writing')
         if agent == 'E' and not classification_unresolved(state) and not all(state['attempts'].get(a) for a in ('B', 'C')):
             raise ValueError('Synthesis cannot precede research')
         if agent == 'F':

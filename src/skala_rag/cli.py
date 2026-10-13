@@ -148,6 +148,25 @@ def _analyze_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_orchestration_storage(args: argparse.Namespace) -> None:
+    """Connect a moved storage bundle without copying or rebuilding its index."""
+    storage = args.storage_root.expanduser().resolve() if args.storage_root else Path('storage').resolve()
+    if args.storage_root and not storage.is_dir():
+        raise FileNotFoundError(f'Storage directory not found: {storage}')
+    args.index = args.index or storage / 'indexes/qwen3-0.6b-v1'
+    args.retriever = args.retriever or ('faiss' if (args.index / 'manifest.json').is_file() else 'bm25')
+    if args.storage_root and args.retriever == 'bm25' and not (args.index / 'manifest.json').is_file():
+        raise FileNotFoundError(f'Storage FAISS index missing: {args.index}; specify --index')
+    if args.storage_root and args.research_root is None:
+        raw = storage / 'raw'
+        roots = [p for p in ([raw, *sorted(raw.iterdir())] if raw.is_dir() else [])
+                 if (p / 'data/company_master.json').is_file()]
+        if len(roots) != 1:
+            raise ValueError('Specify --research-root: storage/raw must contain one company master')
+        args.research_root = roots[0]
+    args.embedding_cache = storage / 'models/hub'
+
+
 def _orchestrate_command(args: argparse.Namespace) -> int:
     import hashlib
     import uuid
@@ -162,6 +181,7 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     from skala_rag.tracing import TraceRecorder
     from tempfile import TemporaryDirectory
 
+    _resolve_orchestration_storage(args)
     run_id = str(uuid.UUID(args.resume or args.run_id)) if args.resume or args.run_id else str(uuid.uuid4())
     run_dir = args.output / run_id
     if args.resume:
@@ -184,7 +204,8 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     limits = Limits(max_attempts_per_agent=args.max_attempts,
         max_report_attempts=args.max_report_attempts, max_errors=args.max_errors,
         max_steps=args.max_steps, max_supervisor_steps=args.max_supervisor_steps)
-    configuration = {'retriever': args.retriever, 'model': args.model, 'judge_model': args.judge_model,
+    configuration = {'report_contract': 'assignment-v3',
+        'retriever': args.retriever, 'model': args.model, 'judge_model': args.judge_model,
         'financial_api': args.financial_api, 'research_root': str(args.research_root.resolve()) if args.research_root else None,
         'index': str(args.index.resolve()) if args.retriever == 'faiss' else None,
         'no_pdf': args.no_pdf, 'limits': limits.model_dump()}
@@ -204,7 +225,11 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     if args.retriever == 'faiss':
         if not (args.index / 'manifest.json').is_file():
             raise FileNotFoundError(f'FAISS index not found: {args.index}')
-        retriever = FaissEvidenceRetriever(args.index, QwenEmbeddingProvider(device=_device(args.device), batch_size=1))
+        cached = args.embedding_cache.is_dir()
+        retriever = FaissEvidenceRetriever(args.index, QwenEmbeddingProvider(
+            device=_device(args.device), batch_size=1,
+            cache_folder=str(args.embedding_cache) if cached else None,
+            local_files_only=cached))
     # Both retrieval modes join documents/master; version labels alone cannot
     # detect replacement of an index or its provenance with the same name.
     from skala_rag.agents.market_competition.documents import load_documents
@@ -229,7 +254,7 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     agents = build_orchestration_agents(research_root=args.research_root, retriever=retriever,
         index_count=retriever.manifest.chunk_count if retriever else 100,
         model=model, judge_model=judge_model, financial_api=args.financial_api,
-        page_counter=None if args.no_pdf else page_counter)
+        page_counter=page_counter)
     run_dir.mkdir(parents=True, exist_ok=True)
     if not args.resume:
         (run_dir / 'input.json').write_text(json.dumps(incoming, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -256,17 +281,43 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
             result.update(status='failed', termination_reason='그래프 실행 경계 오류: ' + type(exc).__name__)
             recorder.record('execution', {'status': 'failed', 'error_type': type(exc).__name__})
 
-    try:
-        if result.get('report'):
-            report = result['report']
-            (run_dir / 'report.md').write_text(render_evaluation_markdown(report), encoding='utf-8')
-            if not args.no_pdf:
-                path = render_evaluation_pdf(report, run_dir / 'report.pdf')
-                if len(PdfReader(str(path)).pages) > 10:
-                    result.update(status='incomplete', termination_reason='최종 PDF 10쪽 초과')
-    except Exception as exc:
-        result.update(status='failed', termination_reason='보고서 저장 오류: ' + type(exc).__name__)
-        recorder.record('storage', {'status': 'failed', 'error_type': type(exc).__name__})
+        try:
+            # A late layout failure re-enters the existing graph with the SAME
+            # attempt/step budget and a format verdict for this report revision.
+            while result.get('report') and result['status'] == 'passed':
+                report = result['report']
+                with TemporaryDirectory(dir=run_dir) as directory:
+                    staged = Path(directory)
+                    pdf = render_evaluation_pdf(report, staged / 'report.pdf')
+                    pages = len(PdfReader(str(pdf)).pages)
+                    if pages > 10:
+                        from skala_rag.models.orchestration import QualityItem
+                        verdict = result['quality_result'].model_copy(deep=True)
+                        verdict.items = [QualityItem(criterion='format', verdict='fail', target='F',
+                            reason=f'최종 PDF {pages}쪽: 최대 10쪽 초과',
+                            questions=[f'현재 {pages}쪽입니다. 목차·핵심 수치·근거·한계는 유지하고 중복 설명을 줄여 10쪽 이내로 축약하세요.'])
+                            if item.criterion == 'format' else item for item in verdict.items]
+                        recorder.record('publication', {'status': 'rework', 'pages': pages,
+                            'report_revision': result['report_revision']})
+                        graph.update_state(config, {'status': 'running', 'termination_reason': None,
+                            'quality_result': verdict}, as_node='collect')
+                        result = invoke_supervisor(graph, None, config=config)
+                        continue
+                    (staged / 'report.md').write_text(render_evaluation_markdown(report), encoding='utf-8')
+                    if not args.no_pdf:
+                        pdf.replace(run_dir / 'report.pdf')
+                    (staged / 'report.md').replace(run_dir / 'report.md')
+                    break
+        except KeyboardInterrupt:
+            result = dict(graph.get_state(config).values)
+            result.update(status='interrupted', termination_reason='최종 발행·축약 중 사용자 중단')
+        except Exception as exc:
+            result = dict(graph.get_state(config).values)
+            result.update(status='failed', termination_reason='최종 발행·축약 오류: ' + type(exc).__name__)
+            recorder.record('storage', {'status': 'failed', 'error_type': type(exc).__name__})
+    if result['status'] != 'passed':
+        for name in ('report.md', 'report.pdf'):
+            (run_dir / name).unlink(missing_ok=True)
     recorder.finish(result['status'])
     payload = supervisor_storage_payload(result)
     payload['tracing'] = {'project': recorder.project, 'trace_id': run_id,
@@ -299,8 +350,10 @@ def _parser(prog: str = 'skala-rag') -> argparse.ArgumentParser:
     orchestrate.add_argument('--company')
     orchestrate.add_argument('--as-of-date', type=date.fromisoformat)
     orchestrate.add_argument('--research-root', type=Path)
-    orchestrate.add_argument('--retriever', choices=['faiss', 'bm25'], default='bm25')
-    orchestrate.add_argument('--index', type=Path, default=Path('storage/indexes/qwen3-0.6b-v1'))
+    orchestrate.add_argument('--storage-root', type=Path, help='Existing storage bundle with indexes, raw and models')
+    orchestrate.add_argument('--retriever', choices=['faiss', 'bm25'],
+                             help='Defaults to FAISS when an index exists, otherwise BM25')
+    orchestrate.add_argument('--index', type=Path, help='Defaults to <storage-root>/indexes/qwen3-0.6b-v1')
     orchestrate.add_argument('--device', default='cpu', choices=['auto', 'cpu', 'mps', 'cuda'])
     orchestrate.add_argument('--model', help='Structured research/generation and Supervisor sufficiency model')
     orchestrate.add_argument('--judge-model', help='Separate semantic report Judge; defaults to --model')

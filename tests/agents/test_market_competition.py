@@ -142,3 +142,28 @@ class MarketCompetitionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_storage_inventory_loads_papers_and_rejects_tampering(tmp_path):
+    import hashlib
+    import pytest
+    (tmp_path / 'data').mkdir()
+    (tmp_path / 'data/source_manifest.json').write_text(json.dumps({'sources': []}))
+    paper = tmp_path / 'paper.md'
+    paper.write_text('논문 저자 보고: 특정 작업에서 성능 개선, 외부 재현 미확인.')
+    item = dict(doc_id='paper', company_id='robot', title='검증 논문', source_grade='A',
+        document_type='paper', original_url='https://journal.example/paper',
+        published_at='2026-01-01', observed_at='2026-09-30', relative_path='paper.md',
+        content_sha256=hashlib.sha256(paper.read_bytes()).hexdigest(), independent_verification=False)
+    inventory = tmp_path / 'data/evidence_documents.jsonl'
+    inventory.write_text(json.dumps(item) + '\n' + json.dumps(item))
+    loaded = load_documents(tmp_path)
+    assert len(loaded) == 1 and loaded[0].source_type == 'paper'
+    assert loaded[0].independent is False and loaded[0].content_kind == 'research_summary'
+    paper.write_text('수정된 미검증 자료')
+    with pytest.raises(ValueError, match='checksum'):
+        load_documents(tmp_path)
+    item['relative_path'] = '../outside.md'
+    inventory.write_text(json.dumps(item))
+    with pytest.raises(ValueError, match='escapes'):
+        load_documents(tmp_path)

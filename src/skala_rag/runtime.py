@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from skala_rag.agents.interfaces import DecisionResult, InvestmentAgents
+from skala_rag.agents.interfaces import AnalysisResult, DecisionResult, InvestmentAgents
 from skala_rag.agents.market_classification import MarketClassificationAgent
 from skala_rag.agents.market_classification.catalog import JsonCompanyCatalog
 from skala_rag.agents.market_competition.agent import MarketCompetitionAgent
@@ -20,7 +20,7 @@ from skala_rag.agents.market_competition.retrieval import LocalMarketRetriever
 from skala_rag.agents.financial_agent.adapter import FinancialAnalyzerAdapter
 from skala_rag.agents.tech_agents.tech import technology_node
 from skala_rag.agents.decision_agents.decision import CRITERIA, decision_node, _score_cap
-from skala_rag.agents.report import make_report_writer
+from skala_rag.agents.report import build_evaluation_report, make_report_writer
 from skala_rag.models import Evidence, InvestmentDecision, InvestmentReport
 from skala_rag.retrieval.adapters import FaissMarketRetriever, MarketRetriever
 
@@ -61,14 +61,19 @@ def _invoke(model, schema, system, payload):
 
 
 class TechnologyAnalyzer:
-    def __init__(self, retriever: MarketRetriever, model=None):
+    def __init__(self, retriever: MarketRetriever, model=None, retain_research_evidence=False):
         self.retriever, self.model = retriever, model
+        self.retain_research_evidence = retain_research_evidence
 
     def __call__(self, profile, category, query):
-        chunks = self.retriever.search(
-            f'{profile.company_name} 제품 사양 기술 실험 한계 특허 인증 {query}',
-            scope='company', company_ids={profile.company_id},
-            forms={profile.physical_ai_type}, as_of_date=profile.as_of_date, limit=12)
+        queries = [f'{profile.company_name} 제품 사양 기술 실험 한계 특허 인증 {query}']
+        if self.retain_research_evidence:
+            queries += [f'{profile.company_name} 논문 연구 방법 실험 결과 성능 기준선 검증 한계',
+                        f'{profile.company_name} 특허 로봇 제어 액추에이터 권리 출원 등록']
+        chunks = list({c.chunk_id: c for question in queries for c in self.retriever.search(
+            question, scope='company', company_ids={profile.company_id},
+            forms={profile.physical_ai_type}, as_of_date=profile.as_of_date,
+            limit=4 if self.retain_research_evidence else 12)}.values())
         by_id = {c.chunk_id: c for c in chunks}
         if self.model and chunks:
             draft = TechnicalClaims.model_validate(_invoke(self.model, TechnicalClaims,
@@ -89,14 +94,21 @@ class TechnologyAnalyzer:
             eid = 'tech:' + hashlib.sha256((chunk.chunk_id + claim.quote).encode()).hexdigest()[:20]
             evidence.append(Evidence(evidence_id=eid, claim_text=claim.quote,
                 stance=claim.stance, source_type=doc.source_type, source_grade=doc.source_grade,
-                source_uri=doc.source_url, locator=f'{doc.locator}#char={chunk.offset}',
+                source_uri=doc.source_url, source_title=doc.title,
+                independent=doc.independent, source_event_id=doc.document_id,
+                locator=f'{doc.locator}#char={chunk.offset}',
                 published_at=doc.published_at, company_id=profile.company_id,
                 topic=claim.topic).model_dump(mode='json'))
 
         def search(**kwargs):
             return [e for e in evidence if e['stance'] == kwargs['stance']][:kwargs['limit']]
 
-        return technology_node(profile, category, query or f'{profile.company_name} 기술 분석', search=search)
+        result = technology_node(profile, category, query or f'{profile.company_name} 기술 분석', search=search)
+        if self.retain_research_evidence:
+            # Scoring caps still apply to the assessment. The report also needs the
+            # remaining verified retrieval results, without upgrading unknown claims.
+            return AnalysisResult(result.assessment, [Evidence.model_validate(e) for e in evidence])
+        return result
 
 
 class MarketGenerator:
@@ -150,14 +162,15 @@ class LockedRetriever:
 
 def build_runtime_agents(*, research_root: Path | None = None, retriever=None,
                          index_count: int = 100, technology_retriever=None,
-                         market_retriever=None, financial_analyzer=None, model=None):
+                         market_retriever=None, financial_analyzer=None, model=None,
+                         retain_research_evidence=False):
     catalog = JsonCompanyCatalog(research_root)
     documents = load_documents(catalog.root)
     shared = (FaissMarketRetriever(LockedRetriever(retriever), documents, fetch_k=index_count)
               if retriever is not None else LocalMarketRetriever(documents))
     return InvestmentAgents(
         classify_market=MarketClassificationAgent(catalog=catalog),
-        analyze_technology=TechnologyAnalyzer(technology_retriever or shared, model),
+        analyze_technology=TechnologyAnalyzer(technology_retriever or shared, model, retain_research_evidence),
         analyze_market=MarketCompetitionAgent(retriever=market_retriever or shared,
                          generator=MarketGenerator(model) if model else None),
         analyze_financials=financial_analyzer or FinancialAnalyzerAdapter(),
@@ -176,7 +189,7 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
     from skala_rag.agents.supervisor import SupervisorPolicy, classification_unresolved
     from skala_rag.models import MarketAssessment, MissingFact, TechAssessment
     from skala_rag.models.orchestration import (
-        ClassificationPayload, CitedClaim, EvaluationReport, EvaluationSummary,
+        ClassificationPayload, CitedClaim, EvaluationSummary,
         PerspectiveResult, QualityVerdict, ResearchResult, SupervisorDecision, VIEWS,
     )
 
@@ -191,7 +204,8 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
 
     legacy = build_runtime_agents(research_root=research_root, retriever=retriever,
         index_count=index_count, model=model,
-        financial_analyzer=None if financial_api else unavailable_financials)
+        financial_analyzer=None if financial_api else unavailable_financials,
+        retain_research_evidence=True)
 
     def invoke_structured(llm, schema, instruction, payload):
         # Env-enabled automatic tracing must not upload prompts/source text.
@@ -229,7 +243,9 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
         if model and evidence:
             draft = invoke_structured(model, PerspectiveDraft,
                 '요청한 관점만 중립적으로 분석한다. 각 주장에 제공된 evidence_id만 연결한다. '
-                '실제 시험·제품 조건, 독립 출처와 반대 근거를 포함한다. 자료에 없는 내용은 MissingFact로 남긴다.',
+                '실제 시험·제품 조건, 독립 출처와 반대 근거를 포함한다. '
+                '보고서의 사업·제품·시장·경쟁·실적·팀·재무·기업가치 목차에 활용할 구체적인 사실과 조건을 '
+                '담당 관점 안에 보존하고 지나치게 한 문장으로 요약하지 않는다. 자료에 없는 내용은 MissingFact로 남긴다.',
                 {'views': views, 'questions': request.questions,
                  'assessment': result.assessment.model_dump(mode='json'),
                  'evidence': [e.model_dump(mode='json') for e in evidence]})
@@ -266,28 +282,16 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
         return payload
 
     def write(request, state):
-        summary = state['evaluation_summary']
-        evidence = {e.evidence_id: e for e in state['evidence']}
-        ids = {eid for p in summary.perspectives for c in p.findings for eid in c.evidence_ids}
-        payload = EvaluationReport(summary=state['company_profile'].company_name + '의 네 관점 평가',
-            perspectives=summary.perspectives, limitations=summary.limitations,
-            analysis_revision=state['analysis_revision'],
-            references={eid: evidence[eid].source_uri for eid in sorted(ids) if eid in evidence})
-        if model:
-            payload = invoke_structured(model, EvaluationReport,
-                'SUMMARY, 기술 성숙도·시장성·이해관계자·도메인 적용, 한계, REFERENCE에 해당하는 '
-                '구조화 보고서를 작성한다. 새 사실·근거·URL을 만들지 말고 투자·구매 추천하지 않는다. '
-                '모든 중요한 주장을 evidence_ids로 연결하고 지적된 문제를 수정한다. '
-                '10쪽 이내를 목표로 간결하게 작성하고 analysis_revision을 유지한다.',
-                {'draft': payload.model_dump(mode='json'), 'instructions': request.questions,
-                 'previous_quality': state['quality_result'].model_dump(mode='json') if state.get('quality_result') else None})
-        return payload
+        generate = (lambda schema, instruction, payload:
+                    invoke_structured(model, schema, instruction, payload)) if model else None
+        return build_evaluation_report(state, request.questions, generate)
 
     def judge(report, state, request):
         return invoke_structured(judge_model or model, QualityVerdict,
             '보고서를 엄격히 평가한다. groundedness는 인용이 실제 주장·수치·조건을 지지하는지, '
             'neutrality는 기술 우열·투자 추천·단정, bias는 출처 독립성·불리한 근거 누락, '
-            'coverage는 네 관점에 실제 답했는지 판단한다. 각 기준은 pass/fail/unknown과 사유를 반환한다. '
+            'format은 기존 14개 목차·SUMMARY 반 페이지·실제 사용 REFERENCE 형식을 확인한다. '
+            '관점 커버리지는 평가하지 않는다. 세 품질 기준과 format 각각 pass/fail/unknown을 반환한다. '
             '실패 시 적절한 담당 B/C/D/E/F와 구체적인 수정 질문을 지정한다. '
             '조사 요약만 있거나 출처 독립성이 확인되지 않으면 unknown으로 판단한다. '
             '서로 다른 도메인만으로 독립성을 확정하지 않는다. '
@@ -316,6 +320,10 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
                 return SupervisorDecision(action='research', targets=targets,
                     reason=judgement.reason, questions=judgement.questions,
                     based_on_revision=state['analysis_revision'], sufficient=False)
+            if not judgement.sufficient:
+                return SupervisorDecision(action='finish', terminal_status='incomplete',
+                    reason='근거 부족 및 재조사 경로 소진: ' + judgement.reason,
+                    based_on_revision=state['analysis_revision'], sufficient=False)
             return decision.model_copy(update={'sufficient': judgement.sufficient,
                 'reason': judgement.reason,
                 'questions': judgement.questions or decision.questions})
@@ -328,13 +336,9 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
 
 
 def render_evaluation_markdown(report):
-    labels = {'technology': '기술 성숙도', 'market': '시장성',
-              'stakeholders': '이해관계자', 'domain': '도메인 적용'}
-    sections = ['# SUMMARY', report.summary]
-    for perspective in report.perspectives:
-        sections.append('## ' + labels[perspective.view])
-        sections.extend(c.text + ' [' + ', '.join(c.evidence_ids) + ']' for c in perspective.findings)
-        sections.extend('확인 불가: ' + m.field + ' — ' + m.reason for m in perspective.missing_facts)
-    sections += ['## 한계·추가 확인', *report.limitations, '## REFERENCE']
-    sections.extend(f'[{eid}] {url}' for eid, url in report.references.items())
+    from skala_rag.agents.report import evaluation_report_sections, evaluation_reference_lines
+    sections = ['# ' + report.title]
+    for title, body in evaluation_report_sections(report):
+        sections.extend(['## ' + title, body])
+    sections += ['## 14. REFERENCE', *evaluation_reference_lines(report)]
     return '\n\n'.join(sections) + '\n'

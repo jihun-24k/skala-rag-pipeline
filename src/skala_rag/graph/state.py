@@ -92,7 +92,9 @@ def merge_task_results(current: dict[str, TaskResult], update: dict[str, TaskRes
 
 
 class SupervisorState(TypedDict, total=False):
-    # Payload and recovery identity; source documents and event history stay external.
+    # 강의 예시 적용 근거·각주: README.md의 "강의 State 예시의 적용 근거".
+    # 실행별 공유 State. 원문 파일/전체 결정 로그는 외부, 근거 발췌는 payload에 보존.
+    # 복구·관측성 연결: 같은 run/thread/trace ID와 버전/지문으로 재개 호환성 확인.
     run_id: str
     thread_id: str
     trace_id: str
@@ -100,6 +102,7 @@ class SupervisorState(TypedDict, total=False):
     input_fingerprint: str
     config_version: str
     index_version: str | None
+    # Payload: 기업 평가의 범위, 최신 조사 근거, 종합·보고서·품질 결과.
     query: str
     as_of_date: str
     candidate_companies: list[str | dict[str, object]]
@@ -118,11 +121,14 @@ class SupervisorState(TypedDict, total=False):
     pending_tasks: list[TaskRequest]
     task_status: dict[str, str]
     next_action: SupervisorDecision
+    # 예약 시도 수. 오류 retry와 품질 재작업의 실제 횟수는 외부 trace와 대조한다.
     attempts: dict[str, int]
     stagnant_agents: list[str]
     research_sufficient: bool | None
+    # 새 근거/보고서가 나오면 이전 종합·품질판정을 무효화한다.
     analysis_revision: int
     report_revision: int
+    # 종료 안전장치: 정해진 단계 수를 성공 조건으로 사용하지 않는다.
     step_count: int
     supervisor_count: int
     limits: Limits

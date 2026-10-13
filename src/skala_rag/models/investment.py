@@ -21,6 +21,14 @@ class MissingFact(DomainModel):
     sources_checked: list[str] = Field(default_factory=list)
 
 
+class FinancialObservation(DomainModel):
+    metric: Literal['revenue', 'operating_income', 'total_assets', 'total_liabilities']
+    period_end: date
+    unit: str
+    statement_scope: Literal['consolidated', 'separate']
+    report_type: Literal['annual'] = 'annual'
+
+
 class Evidence(DomainModel):
     evidence_id: str
     claim_text: str
@@ -28,6 +36,7 @@ class Evidence(DomainModel):
     source_type: str
     source_grade: Literal["A", "B", "C", "D", "E"]
     source_uri: str
+    source_title: str | None = None
     locator: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     # 검색기가 확인한 메타데이터를 보존한다. 이 값들은 점수 상한과 시점 검증에 쓰고,
@@ -36,6 +45,7 @@ class Evidence(DomainModel):
     published_at: date | None = None
     source_event_id: str | None = None
     independent: bool | None = None
+    financial_observation: FinancialObservation | None = None
     value: float | None = None
     metrics: dict[str, float] = Field(default_factory=dict)
     metric_names: list[str] = Field(default_factory=list)

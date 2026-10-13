@@ -51,13 +51,16 @@ def researchers(*, market_gap=False, timeout=False, wrong_reference=False, unres
         refs = {e.evidence_id: e.source_uri for e in state['evidence']}
         if wrong_reference and task.attempt == 1:
             refs['tech'] = 'https://invented.example/'
-        return EvaluationReport(summary='기업의 네 관점 평가',
+        from skala_rag.agents.report import default_evaluation_sections, report_classification
+        report = EvaluationReport(classification=report_classification(state), company_name=profile.company_name, summary='기업의 네 관점 평가',
             perspectives=state['evaluation_summary'].perspectives,
             references=refs, analysis_revision=state['analysis_revision'])
+        report.sections = default_evaluation_sections(report)
+        return report
 
     def judge(report, state, task):
         return QualityVerdict(items=[QualityItem(criterion=k, verdict='pass', reason='fixture 의미 검증')
-            for k in ('groundedness', 'neutrality', 'bias', 'coverage')], report_revision=state['report_revision'])
+            for k in ('groundedness', 'neutrality', 'bias', 'format')], report_revision=state['report_revision'])
 
     workers = {'A': a, 'B': b, 'C': c, 'D': lambda task, state: ResearchResult(),
                'E': e, 'F': f, 'G': ReportEvaluator(None if no_judge else judge)}
@@ -99,7 +102,7 @@ def test_cli_saves_report_and_resumes_without_repeating_completed_tasks(tmp_path
     run_dir = tmp_path / run_id
     payload = json.loads((run_dir / 'result.json').read_text())
     assert payload['status'] == 'passed' and payload['tracing']['delivery_status'] == 'disabled'
-    assert (run_dir / 'report.md').read_text().startswith('# SUMMARY')
+    assert (run_dir / 'report.md').read_text().startswith('# 테스트 로봇 평가 보고서')
     assert (run_dir / 'checkpoints.sqlite3').is_file()
     old_count = len(calls)
     assert _orchestrate_command(_parser().parse_args(common + ['--resume', run_id])) == 0
@@ -108,7 +111,7 @@ def test_cli_saves_report_and_resumes_without_repeating_completed_tasks(tmp_path
         _orchestrate_command(_parser().parse_args(common + ['--resume', run_id, '--query', 'changed']))
 
 
-def test_neutral_pdf_preserves_four_views_and_contains_no_investment_headings(tmp_path):
+def test_evaluation_pdf_preserves_previous_report_outline(tmp_path):
     from pypdf import PdfReader
     from skala_rag.pdf_report import render_evaluation_pdf
     agents, _ = researchers()
@@ -117,7 +120,7 @@ def test_neutral_pdf_preserves_four_views_and_contains_no_investment_headings(tm
     pages = PdfReader(str(path)).pages
     text = '\n'.join(page.extract_text() for page in pages)
     assert len(pages) <= 10
-    assert 'SUMMARY' in text and '기술 성숙도' in text and '이해관계자' in text
+    assert 'SUMMARY' in text and 'BUSINESS IDEA' in text and 'FINANCIALS' in text
     assert '투자 의견' not in text
     assert 'REFERENCE' in text
 
@@ -155,7 +158,7 @@ def test_conflicting_evidence_id_is_a_collection_error():
 def test_semantic_judge_cannot_mask_wrong_report_revision():
     def judge(report, state, task):
         return QualityVerdict(items=[QualityItem(criterion=k, verdict='pass', reason='wrong version')
-            for k in ('groundedness', 'neutrality', 'bias', 'coverage')],
+            for k in ('groundedness', 'neutrality', 'bias', 'format')],
             report_revision=state['report_revision'] + 1)
     agents, _ = researchers(overrides={'G': ReportEvaluator(judge)})
     state = run(agents)
@@ -251,14 +254,16 @@ def test_no_progress_and_no_judge_are_not_quality_success():
     agents, calls = researchers(no_judge=True)
     state = run(agents)
     assert state['status'] == 'incomplete'
-    assert all(item.verdict == 'unknown' for item in state['quality_result'].items)
+    assert all(item.verdict == 'unknown' for item in state['quality_result'].items if item.criterion != 'format')
+    assert next(i for i in state['quality_result'].items if i.criterion == 'format').verdict == 'pass'
 
 
-def test_unresolved_identity_skips_research_but_evaluates_limited_report():
+def test_unresolved_identity_stops_before_report_generation():
     agents, calls = researchers(unresolved=True)
     state = run(agents)
     assert not any(counts(calls)[a] for a in 'BCD')
-    assert counts(calls)['G'] >= 1 and state['status'] == 'incomplete'
+    assert not any(counts(calls)[a] for a in 'EFG')
+    assert state['status'] == 'incomplete' and state['report'] is None
 
 
 def test_invalid_supervisor_route_is_rejected_and_error_budget_terminates():
@@ -323,5 +328,180 @@ def test_failed_sufficiency_gate_cannot_be_overridden_by_passing_report_judge():
         return decision
     agents, _ = researchers(supervise=policy)
     state = run(agents)
-    assert state['quality_result'].passed
+    assert state['quality_result'] is None and state['report'] is None
     assert state['research_sufficient'] is False and state['status'] == 'incomplete'
+
+
+def test_report_format_failure_rewrites_only_writer_and_rechecks():
+    base, _ = researchers()
+    def omit_team_once(task, state):
+        report = base.workers['F'](task, state)
+        if task.attempt == 1:
+            report.sections = [s for s in report.sections if s.key != 'team']
+        return report
+    agents, calls = researchers(overrides={'F': omit_team_once})
+    state = run(agents)
+    assert state['status'] == 'passed'
+    assert counts(calls)['F'] == counts(calls)['G'] == 2
+    assert counts(calls)['B'] == counts(calls)['C'] == 1
+    retry = next(t for a, t in calls if a == 'F' and t.attempt == 2)
+    assert any('목차' in q for q in retry.questions)
+
+
+def test_quality_checks_published_sections_not_hidden_perspectives():
+    agents, _ = researchers()
+    state = run(agents)
+    report = state['report'].model_copy(deep=True)
+    report.sections[0].findings = [CitedClaim(text='근거 없는 수치', evidence_ids=['invented'])]
+    verdict = ReportEvaluator()(None, {**state, 'report': report})
+    assert next(i for i in verdict.items if i.criterion == 'groundedness').verdict == 'fail'
+    assert 'coverage' not in {i.criterion for i in verdict.items}
+
+
+def test_summary_and_page_limits_cannot_be_overridden_by_judge():
+    agents, _ = researchers()
+    state = run(agents)
+    report = state['report'].model_copy(deep=True)
+    report.summary = '요약이 너무 길어서 본문과 중복됩니다. ' * 200
+    def judge(*args):
+        return state['quality_result']
+    verdict = ReportEvaluator(judge, page_counter=lambda r: 11)(None, {**state, 'report': report})
+    item = next(i for i in verdict.items if i.criterion == 'format')
+    assert item.verdict == 'fail' and item.target == 'F'
+    assert '반 페이지' in item.reason and '10쪽' in item.reason
+
+
+def test_unused_reference_and_summary_only_citation_fail_grounding():
+    agents, _ = researchers()
+    state = run(agents)
+    report = state['report'].model_copy(deep=True)
+    report.references['extra'] = 'https://unused.example/'
+    verdict = ReportEvaluator()(None, {**state, 'report': report})
+    assert next(i for i in verdict.items if i.criterion == 'groundedness').verdict == 'fail'
+    report.references.pop('extra')
+    report.summary = '본문에 없는 새 사실 [extra]'
+    verdict = ReportEvaluator()(None, {**state, 'report': report})
+    assert next(i for i in verdict.items if i.criterion == 'groundedness').verdict == 'fail'
+
+
+def test_external_storage_resolves_index_raw_and_local_model_cache(tmp_path):
+    from skala_rag.cli import _parser, _resolve_orchestration_storage
+    storage = tmp_path / 'moved-storage'
+    index = storage / 'indexes/qwen3-0.6b-v1'
+    index.mkdir(parents=True)
+    (index / 'manifest.json').write_text('{}')
+    research = storage / 'raw/자료조사'
+    (research / 'data').mkdir(parents=True)
+    (research / 'data/company_master.json').write_text('{}')
+    args = _parser().parse_args(['orchestrate', '--storage-root', str(storage)])
+    _resolve_orchestration_storage(args)
+    assert args.retriever == 'faiss' and args.index == index
+    assert args.research_root == research and args.embedding_cache == storage / 'models/hub'
+    (index / 'manifest.json').unlink()
+    args = _parser().parse_args(['orchestrate', '--storage-root', str(storage)])
+    with pytest.raises(FileNotFoundError, match='FAISS'):
+        _resolve_orchestration_storage(args)
+
+
+def test_orchestration_keeps_unverified_retrieval_without_promoting_it():
+    from skala_rag.runtime import TechnologyAnalyzer
+    from skala_rag.agents.market_competition.documents import MarketDocument
+    from skala_rag.agents.market_competition.retrieval import LocalMarketRetriever
+    docs = [MarketDocument(document_id=f'd{i}', title=f'로봇 논문 {i}',
+        text=f'로봇 제품 실험 조건 {i}, 저자 보고이며 외부 재현은 미확인.',
+        source_url=f'https://journal.example/{i}', source_grade='A', source_type='paper',
+        scope='company', company_ids=['robot'], observed_at='2026-09-30') for i in range(3)]
+    profile = CompanyProfile(company_id='robot', company_name='로봇', physical_ai_type='이동형 로봇',
+                             stage='검증', as_of_date=date(2026, 9, 30))
+    result = TechnologyAnalyzer(LocalMarketRetriever(docs), retain_research_evidence=True)(
+        profile, MarketCategory(industry='로봇', sub_industry='이동형 로봇'), '실험 조건')
+    assert len(result.evidence) == 3
+    assert all(e.stance == 'unknown' for e in result.evidence)
+
+
+def test_actionable_unknown_is_researched_then_re_evaluated():
+    base, _ = researchers()
+    def evaluate(task, state):
+        verdict = base.workers['G'](task, state)
+        if task.attempt == 1:
+            verdict.items[2] = QualityItem(criterion='bias', verdict='unknown',
+                reason='독립성 추가 확인 필요', target='C', questions=['출처 독립성을 확인하세요.'])
+        return verdict
+    def updated_market(task, state):
+        payload = base.workers['C'](task, state)
+        if task.attempt > 1:
+            payload.perspectives[0].findings[0].text += ' 출처 독립성 추가 확인'
+        return payload
+    agents, calls = researchers(overrides={'G': evaluate, 'C': updated_market})
+    state = run(agents)
+    assert state['status'] == 'passed'
+    assert counts(calls)['C'] == 2 and counts(calls)['G'] == 2
+    assert counts(calls)['B'] == 1
+
+
+@pytest.mark.parametrize('oversized', [False, True])
+def test_cli_never_publishes_unpassed_or_oversized_reports(tmp_path, monkeypatch, oversized):
+    import json
+    from uuid import uuid4
+    import skala_rag.runtime as runtime
+    import skala_rag.pdf_report as pdf_module
+    from skala_rag.cli import _parser, _orchestrate_command
+    from skala_rag.agents.market_classification.catalog import JsonCompanyCatalog
+    import skala_rag.agents.market_competition.documents as documents
+    agents, _ = researchers(no_judge=not oversized)
+    monkeypatch.setattr(JsonCompanyCatalog, '__init__', lambda self, root: setattr(self, 'root', tmp_path))
+    monkeypatch.setattr(JsonCompanyCatalog, 'list_companies', lambda self: [])
+    monkeypatch.setattr(documents, 'load_documents', lambda root: [])
+    monkeypatch.setattr(runtime, 'build_orchestration_agents', lambda **kwargs: agents)
+    if oversized:
+        def large_pdf(report, path):
+            from pypdf import PdfWriter
+            writer = PdfWriter()
+            for _ in range(11):
+                writer.add_blank_page(width=595, height=842)
+            writer.write(str(path))
+            return path
+        monkeypatch.setattr(pdf_module, 'render_evaluation_pdf', large_pdf)
+    run_id = str(uuid4())
+    args = _parser().parse_args(['orchestrate', '--output', str(tmp_path), '--query', 'fixture',
+                                '--run-id', run_id, '--no-pdf'])
+    assert _orchestrate_command(args) == 2
+    directory = tmp_path / run_id
+    assert not (directory / 'report.pdf').exists() and not (directory / 'report.md').exists()
+    assert json.loads((directory / 'result.json').read_text())['status'] == 'incomplete'
+    assert (directory / 'checkpoints.sqlite3').exists()
+
+
+def test_late_pdf_overflow_returns_to_writer_and_judge_before_publication(tmp_path, monkeypatch):
+    from uuid import uuid4
+    import json
+    import skala_rag.runtime as runtime
+    import skala_rag.pdf_report as pdf_module
+    from skala_rag.cli import _parser, _orchestrate_command
+    from skala_rag.agents.market_classification.catalog import JsonCompanyCatalog
+    import skala_rag.agents.market_competition.documents as documents
+    from pypdf import PdfWriter
+    agents, calls = researchers()
+    monkeypatch.setattr(JsonCompanyCatalog, '__init__', lambda self, root: setattr(self, 'root', tmp_path))
+    monkeypatch.setattr(JsonCompanyCatalog, 'list_companies', lambda self: [])
+    monkeypatch.setattr(documents, 'load_documents', lambda root: [])
+    monkeypatch.setattr(runtime, 'build_orchestration_agents', lambda **kwargs: agents)
+    renders = []
+    def render(report, path):
+        renders.append(report)
+        writer = PdfWriter()
+        for _ in range(11 if len(renders) == 1 else 10):
+            writer.add_blank_page(width=595, height=842)
+        writer.write(str(path))
+        return path
+    monkeypatch.setattr(pdf_module, 'render_evaluation_pdf', render)
+    run_id = str(uuid4())
+    args = _parser().parse_args(['orchestrate', '--output', str(tmp_path), '--query', 'fixture', '--run-id', run_id])
+    assert _orchestrate_command(args) == 0
+    assert counts(calls)['F'] == counts(calls)['G'] == 2
+    assert counts(calls)['B'] == counts(calls)['C'] == 1
+    assert any('11쪽' in question for agent, task in calls if agent == 'F' and task.attempt == 2 for question in task.questions)
+    directory = tmp_path / run_id
+    state = json.loads((directory / 'result.json').read_text())
+    assert state['status'] == 'passed' and state['report_revision'] == 2
+    assert (directory / 'report.pdf').exists()

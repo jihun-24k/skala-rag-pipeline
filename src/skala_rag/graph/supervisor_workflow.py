@@ -35,7 +35,7 @@ def initial_state(query: str, as_of_date: str, *, company: str | None = None,
     identity = {'query': query, 'company': company, 'as_of_date': as_of_date,
                 'config_version': config_version, 'index_version': index_version}
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    return SupervisorState(run_id=run_id, thread_id=run_id, trace_id=run_id, schema_version='1',
+    return SupervisorState(run_id=run_id, thread_id=run_id, trace_id=run_id, schema_version='2',
         input_fingerprint=fingerprint, config_version=config_version, index_version=index_version,
         query=query, as_of_date=as_of_date,
         candidate_companies=[{'company_name': company}] if company else [],
@@ -83,6 +83,10 @@ def build_supervisor_graph(agents: OrchestrationAgents, *, checkpointer=None, re
             decision = (SupervisorDecision(action='finish', reason='실행 또는 오류 예산 소진',
                 based_on_revision=state['analysis_revision'], terminal_status='incomplete' if state.get('report') else 'failed')
                 if exhausted else SupervisorDecision.model_validate(policy(copy.deepcopy(state))))
+            if decision.action in ('synthesize', 'write') and (decision.sufficient is False or state.get('research_sufficient') is False):
+                decision = SupervisorDecision(action='finish', terminal_status='incomplete',
+                    reason='근거 충분성 미충족; 작성 보류: ' + decision.reason,
+                    sufficient=False, based_on_revision=state['analysis_revision'])
             validate_decision(decision, state)
         except Exception as exc:
             error = error_info('supervisor', state['run_id'] + ':supervisor', state['supervisor_count'] + 1, exc)

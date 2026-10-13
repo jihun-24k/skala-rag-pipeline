@@ -36,7 +36,7 @@ def register_font(font_path: Path | None = None) -> str:
 
 def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 분석 보고서',
                font_path: Path | None = None, sections: list[tuple[str, str]] | None = None,
-               reference_heading: str = '참고문헌') -> Path:
+               reference_heading: str = '참고문헌', financial_charts=()) -> Path:
     font = register_font(font_path)
     body = ParagraphStyle('body', fontName=font, fontSize=9, leading=14,
                           wordWrap='CJK', spaceAfter=6, alignment=TA_LEFT)
@@ -126,6 +126,9 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
     for name, content in sections:
         story.append(Paragraph(name, heading))
         add_markdown(content)
+        if name == '9. FINANCIALS':
+            for chart in financial_charts:
+                story.extend([financial_chart_drawing(chart, font), Spacer(1, 10)])
     story.append(Paragraph(reference_heading, heading))
     for index, reference in enumerate(report.references, 1):
         story.append(Paragraph(escape(f'{index}. {reference}'), body))
@@ -148,19 +151,43 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
 
 
 def render_evaluation_pdf(report, output: Path) -> Path:
-    from skala_rag.models import InvestmentReport
-    labels = {'technology': '기술 성숙도', 'market': '시장성',
-              'stakeholders': '이해관계자', 'domain': '도메인 적용'}
-    sections = [('SUMMARY', report.summary)]
-    for perspective in report.perspectives:
-        content = '\n\n'.join(c.text + ' [' + ', '.join(c.evidence_ids) + ']'
-                                for c in perspective.findings)
-        content += '\n\n' + '\n'.join('확인 불가: ' + m.field + ' — ' + m.reason
-                                        for m in perspective.missing_facts)
-        sections.append((labels[perspective.view], content or '확인된 근거 없음'))
-    sections.append(('한계·추가 확인', '\n'.join(report.limitations) or '기록된 추가 확인 사항 없음'))
+    from skala_rag.agents.report import evaluation_report_sections, evaluation_reference_lines
     carrier = InvestmentReport(summary=report.summary, technology='', market_competition='',
-        financials='', risks='', decision='',
-        references=[f'[{eid}] {url}' for eid, url in report.references.items()])
-    return render_pdf(carrier, output, title='Physical AI 다관점 평가 보고서', sections=sections,
-                      reference_heading='REFERENCE')
+        financials='', risks='', decision='', references=evaluation_reference_lines(report))
+    return render_pdf(carrier, output, title=report.title,
+        sections=evaluation_report_sections(report), reference_heading='14. REFERENCE',
+        financial_charts=report.financial_charts)
+
+
+def evaluation_summary_fits(summary: str) -> bool:
+    """실제 PDF와 같은 글꼴·폭·행간으로 반 페이지 상한을 측정한다."""
+    style = ParagraphStyle('summary-check', fontName=register_font(), fontSize=9,
+                           leading=14, wordWrap='CJK', spaceAfter=6)
+    height = sum(Paragraph(escape(p).replace('\n', '<br/>'), style).wrap(A4[0] - 36 * mm, A4[1])[1] + 6
+                 for p in summary.split('\n\n') if p.strip())
+    return height <= (A4[1] - 38 * mm) / 2 - 26
+
+
+def financial_chart_drawing(chart, font):
+    """Vector bars with zero baseline (including losses), exact figures in adjacent table."""
+    from reportlab.graphics.shapes import Drawing, String, Line, Rect
+    width, height = A4[0] - 36 * mm, 156
+    drawing = Drawing(width, height)
+    scope = '연결' if chart.statement_scope == 'consolidated' else '별도'
+    drawing.add(String(0, 140, f'{chart.title} ({scope}, {chart.unit})', fontName=font, fontSize=10))
+    values = [p.value for p in chart.points]
+    low, high = min(0, min(values)), max(0, max(values))
+    span = high - low or 1
+    bottom, plot_height = 32, 84
+    def y(value):
+        return bottom + (value - low) / span * plot_height
+    drawing.add(Line(0, y(0), width, y(0), strokeColor=colors.HexColor('#9aabba')))
+    step = width / len(values)
+    for index, point in enumerate(chart.points):
+        x, bar_width = index * step + step * .3, step * .4
+        drawing.add(Rect(x, min(y(0), y(point.value)), bar_width, abs(y(point.value)-y(0)),
+            fillColor=colors.HexColor('#24758c' if point.value >= 0 else '#b75050'), strokeColor=None))
+        drawing.add(String(x + bar_width / 2, y(point.value) + (4 if point.value >= 0 else -10),
+            f'{point.value:,.0f}', fontName=font, fontSize=8, textAnchor='middle'))
+        drawing.add(String(x + bar_width / 2, 6, point.period, fontName=font, fontSize=8, textAnchor='middle'))
+    return drawing

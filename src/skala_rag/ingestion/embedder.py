@@ -24,11 +24,14 @@ class QwenEmbeddingProvider:
         batch_size: int = 16,
         max_length: int = 1024,
         model: Any | None = None,
+        cache_folder: str | None = None,
+        local_files_only: bool = False,
     ) -> None:
         if model is None:
             from sentence_transformers import SentenceTransformer
 
-            model = SentenceTransformer(self.model_name, device=device)
+            model = SentenceTransformer(self.model_name, device=device,
+                cache_folder=cache_folder, local_files_only=local_files_only)
         self._model = model
         self._model.max_seq_length = max_length
         self._batch_size = batch_size

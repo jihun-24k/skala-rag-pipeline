@@ -14,11 +14,14 @@
 
 - `OrchestrationAgents.workers`: A~G의 `worker(TaskRequest, State 스냅샷) -> 역할별 payload`. `supervise(State) -> SupervisorDecision`은 선택 주입점이며 미설정이면 결정론적 `SupervisorPolicy`를 사용한다. 작업자와 정책에 원본 State를 전달하지 않고 깊은 복사본을 전달한다.
 - A는 `ClassificationPayload`, B/C/D는 `ResearchResult`, E는 `EvaluationSummary`, F는 `EvaluationReport`, G는 `QualityVerdict`를 반환한다. 모든 payload를 역할별 Pydantic 타입으로 검증하고 모르는 필드는 거부한다. E는 과제 경로에서 중립 평가 정리이며 투자 판정 callable을 호출하지 않는다.
+- F는 E의 요약뿐 아니라 활성 관점별 조사 결과와 Evidence의 주장·조건·출처도 받는다. SUMMARY와 기존 섹션은 유지하고, 근거가 충분한 본문은 검증 조건·의미·한계를 문단으로 설명한다. 모델 미설정 시 요약에서 생략된 조사 내용과 결측을 보존한 제한 보고를 작성한다. Markdown/PDF는 같은 본문 렌더러로 미확인 항목의 확인 자료·조사 질문을 표시한다. `EvaluationReport.company_name`은 검증된 기업 프로필에서 설정하며 모델 출력으로 변경하지 않는다. Markdown/PDF 제목과 PDF 메타데이터는 `{기업명} 평가 보고서`를 공유한다. `EvaluationReport.sections`에 기존 2~13장 본문을 저장하고 `reference_details`에는 확인 가능한 서지 정보를 붙인다. 내부 `perspectives`는 조사 연결용이며 출력 본문은 `sections`다. 목차 상수 `REPORT_OUTLINE`을 모델 입력·렌더링·검사에서 공유한다.
 - `TaskRequest`는 안정된 `task_id=<run>:<agent>`, `agent`, 1부터 시작하는 `attempt`, 비어 있지 않은 `questions`, `reason`, `based_on_revision`을 포함한다. B/C는 질문을 실제 검색 query에 추가한다. D의 기존 API 수집 계약에는 자유 질의가 없으므로 사업 지속성 자료 수집에 사용하며 임의 질문별 API 검색을 지원한다고 간주하지 않는다.
 - 노드 어댑터는 payload 또는 정규화한 오류를 `TaskResult`에 담는다. 결과 상태는 `succeeded`, `insufficient`, `unavailable`, `failed`다. 자료 부족은 실행 오류가 아니다. 오류 메시지 대신 고정된 안전한 요약과 예외 종류를 저장한다.
 - 작업자는 `task_results`의 `<task_id>:<attempt>`만 갱신한다. reducer는 같은 결과 재전달을 허용하지만 동일 키의 서로 다른 결과는 거부한다. `collect`가 처리된 키를 기록하고 분석·근거·오류를 한 번 반영한다. Supervisor만 다음 작업·attempt 예약·실행 종료를 결정한다. 에이전트 간 별도 State나 직접 호출은 없다.
 
 ### State·버전·오류
+
+강의 예시와 필드 대응, 7개 설계 항목의 근거 및 제출 트레이스 확인 각주는 [README의 State Schema](../README.md#state-schema)를 따른다. Supervisor 라우팅/재작업과 Orchestrator dynamic fan-out의 증명 대상을 혼동하지 않는다.
 
 | 영역 | 책임과 보존 이유 |
 |---|---|
@@ -33,17 +36,17 @@
 
 `error_count`는 최초 수집한 오류에만 증가하고 복구해도 감소하지 않는다. 성공하면 해당 task의 미해결 오류만 제거한다. `last_error`는 마지막 발생 기록이므로 복구 여부는 `task_errors`로 판단한다. `retry_counts`는 오류에 따른 재예약만 세고, 자료 부족 재조사는 `attempts`에 포함한다. 오류 상한은 별도 최상위 키 대신 `limits.max_errors`다.
 
-timeout·연결 실패·429·5xx는 예산 내 재시도한다. 인증·계약·프로그래밍 오류는 반복하지 않는다. B/C/D 실패는 한계와 미해결 오류를 보존한 제한 보고로 이어질 수 있다. 필수 작업·수집 오류는 실패/미완료로 종료한다. 해결되지 않은 오류나 분류 검토가 있으면 Judge가 통과를 제안해도 `passed`가 될 수 없다.
+timeout·연결 실패·429·5xx는 예산 내 재시도한다. 인증·계약·프로그래밍 오류는 반복하지 않는다. B/C/D의 해결되지 않은 오류는 작성 전에 종료하며 진단 상태로 남긴다. 필수 작업·수집 오류는 실패/미완료로 종료한다. 해결되지 않은 오류나 분류 검토가 있으면 Judge가 통과를 제안해도 `passed`가 될 수 없다.
 
 최신 성공 연구 결과만 활성 근거와 관점에 포함한다. 과거 attempt는 호출 상한 내에서 멱등 재개용으로 유지하며 최신 결과로 대체된 근거는 최종 평가에서 제외한다. 같은 evidence ID의 다른 내용은 수집 오류로 처리한다. 연구 주장은 해당 작업이 반환한 근거 ID만 참조하고 다른 기업·기준일 이후 근거는 거부한다. 분석이 변경되면 revision을 증가시키고 E/F/G를 무효화한다. F가 수정되면 report revision을 증가시키며 G의 과거 verdict를 무효화한다.
 
 ### 품질·저장·관측성
 
-G는 `groundedness`, `neutrality`, `bias`, `coverage` 각각 하나의 `pass/fail/unknown`을 반환한다. 코드 검사에서 실패한 기준을 의미 Judge가 통과로 바꿀 수 없다. ID·원문 URL·출처 분산·추천 표현·네 관점·선택적 PDF 10쪽 상한을 검사하고, 주장 지지 여부·중립성·독립성은 Judge가 검토한다. 출처 독립성 메타데이터가 없으면 코드 결과는 `unknown`이며 의미 검증이 필요하다. 의미 Judge가 없으면 구조적 통과도 `unknown`으로 남는다. Judge가 오래된 report revision을 평가한 결과는 오류다. 품질 실패의 담당과 질문에 따라 B/C/D 재조사, E 재정리, F 수정 후 G 재평가를 선택한다.
+G는 필수 품질 항목 `groundedness`, `neutrality`, `bias`와 별도 형식 검사 `format` 각각 하나의 `pass/fail/unknown`을 반환한다. 관점 커버리지는 강의 구두 정정에 따라 필수 검사에서 제외한다. 코드 검사에서 실패한 기준을 의미 Judge가 통과로 바꿀 수 없다. 실제 출판되는 `sections`의 ID·원문 URL·미사용 REFERENCE·SUMMARY의 본문 외 인용·출처 분산·추천 표현을 검사하고, 주장 지지 여부·중립성·독립성은 Judge가 검토한다. 출처 독립성 메타데이터가 없으면 코드 결과는 `unknown`이며 의미 검증이 필요하다. 의미 Judge가 없으면 세 품질 항목의 구조적 통과도 `unknown`으로 남는다. `format`은 기존 목차 순서·중복/누락과 SUMMARY를 검사하고 PDF 사용 시 실제 10쪽 상한 및 같은 폰트·폭·행간의 SUMMARY 반 페이지 상한을 검사한다. PDF 미사용 시 SUMMARY 700자 초과를 보수적으로 경고하지만 실제 쪽수 검사를 대체하지 않는다. 형식 실패는 구체적인 수정 질문으로 F에 전달한다. Judge가 오래된 report revision을 평가한 결과는 오류다. 품질 실패의 담당과 질문에 따라 B/C/D 재조사, E 재정리, F 수정 후 G 재평가를 선택한다.
 
-`passed`는 현재 보고서·verdict의 네 기준 통과와 미해결 오류 없음일 때만 허용한다. Supervisor의 충분성 모델이 현재 분석을 불충분하다고 판단하면 `research_sufficient=False`로 보존하고 품질 Judge의 통과로 뒤집지 않는다. 새 연구 결과로 분석 버전이 바뀌면 충분성 판단을 초기화하고 다시 평가한다. 부족한 근거·의미 평가 미확인·재작업 상한은 `incomplete`, 필수 실행 실패는 `failed`다. 동일 연구 결과가 반복되면 무진행으로 표시해 같은 조사 반복을 중지한다. CLI 중단은 가능한 결과 파일에 `interrupted`로 기록하고 마지막 정상 체크포인트를 보존한다.
+`passed`는 현재 보고서·verdict의 세 품질 기준 및 형식 검사 통과와 미해결 오류 없음일 때만 허용한다. Supervisor의 충분성 모델이 현재 분석을 불충분하다고 판단하면 `research_sufficient=False`로 보존하고 품질 Judge의 통과로 뒤집지 않는다. 새 연구 결과로 분석 버전이 바뀌면 충분성 판단을 초기화하고 다시 평가한다. 부족한 근거·의미 평가 미확인·재작업 상한은 `incomplete`, 필수 실행 실패는 `failed`다. 동일 연구 결과가 반복되면 무진행으로 표시해 같은 조사 반복을 중지한다. CLI 중단은 가능한 결과 파일에 `interrupted`로 기록하고 마지막 정상 체크포인트를 보존한다.
 
-CLI는 실행 디렉터리에 입력·최종 JSON·Markdown·선택적 PDF, 로컬 이벤트와 SQLite 체크포인트를 저장한다. 재개는 동일 UUID와 입력·설정·자료 SHA-256 지문을 요구한다. FAISS 체크섬 검사와 manifest 내용, 기업 마스터·실제 로드 문서까지 지문에 포함한다. 완료 task를 재사용하지만 중단 당시 완료 여부를 확인하지 못한 외부 호출의 정확히 한 번 실행은 보장하지 않는다. 강제 종료·reducer/DB/저장 오류는 일반 노드 오류처럼 항상 State에 넣을 수 없으므로 실행 경계와 마지막 정상 체크포인트를 확인한다.
+CLI는 모든 실행의 입력·결과 JSON·이벤트·SQLite 체크포인트를 보존한다. Markdown 및 선택적 PDF는 passed 상태이고 최종 렌더가 10쪽 이내일 때만 발행한다. --no-pdf도 평가 및 최종 쪽수 검사를 수행한다. 재개는 동일 UUID와 입력·설정·자료 SHA-256 지문을 요구한다. State schema v2와 CLI 설정 `report_contract=assignment-v3`를 사용한다. 이전 계약의 체크포인트는 최종 발행·분류·재무 차트 계약과 호환되지 않으므로 새 실행을 시작한다. 저수준 Python 재개 호출자도 v1 체크포인트를 재사용하지 않아야 한다. FAISS 체크섬 검사와 manifest 내용, 기업 마스터·실제 로드 문서까지 지문에 포함한다. 완료 task를 재사용하지만 중단 당시 완료 여부를 확인하지 못한 외부 호출의 정확히 한 번 실행은 보장하지 않는다. 강제 종료·reducer/DB/저장 오류는 일반 노드 오류처럼 항상 State에 넣을 수 없으므로 실행 경계와 마지막 정상 체크포인트를 확인한다.
 
 LangSmith는 `--langsmith`와 `LANGSMITH_API_KEY`로 명시 활성화한다. 프로젝트는 CLI 옵션 또는 `LANGSMITH_PROJECT`, 기본 `skala-supervisor`다. 루트/하위 노드에 같은 trace ID를 연결하고 재개는 기존 원격 루트의 dotted order를 재사용한다. 허용된 제어 메타데이터와 근거 ID만 전송하며 원문·query·State·모델 prompt는 자동 tracing을 끄고 제외한다. 인증 필드·키 문자열을 가리고 외부 예외 body는 저장하지 않는다. 원격 오류는 로컬 `tracing` 이벤트와 최종 `delivery_status=failed`에 남긴다. `submitted`는 SDK 호출·flush 성공을 의미하며 대시보드 검토·제출 캡처를 대신하지 않는다. 분석 상태와 전송 상태는 분리한다.
 
@@ -158,3 +161,21 @@ make_decision = partial(decision_node, score=propose_scores)
 | 런타임 주입·실행 | `tests/test_runtime.py` |
 
 공통 계약 변경 후 `uv run pytest -q`로 전체 회귀를 확인한다. 필드 추가·삭제·기본값 변경 시 위 기존 검사를 먼저 확인하고, 영향을 받는 호출자·저장 변환·실패 경로의 검사 부족분을 보완한다. 현재 별도 정적 타입 검사 명령은 프로젝트에 설정되어 있지 않다.
+
+
+### 외부 storage와 보고서용 검색 근거
+
+`orchestrate --storage-root PATH`는 기존 FAISS/SQLite 인덱스, raw 기업 마스터, models/hub 캐시를 한 저장소에서 연결한다. 명시한 storage의 기본 인덱스가 없으면 조용히 BM25로 전환하지 않고 오류를 낸다. `--index`, `--research-root`로 경로를 명시할 수 있다. 기본 실행은 인덱스가 있으면 FAISS, 없으면 BM25다. Qwen 캐시가 존재하면 로컬 전용 로딩을 사용한다.
+
+`load_documents`는 기존 source_manifest에 없는 evidence_documents.jsonl 항목을 ID로 중복 제거해 추가한다. 로컬 경로 이탈·원문 파일 누락·제공된 해시 불일치를 거부한다. 별도 검증 정보가 없는 연구 요약은 source_excerpt나 독립 검증으로 승격하지 않는다. `MarketDocument.independent`, `Evidence.source_title`은 선택 필드이며 원문 제목·출처 사건 ID·발행일·독립성 메타데이터가 연구 근거로 연결된다.
+
+기술 분석의 `retain_research_evidence=True`는 Supervisor 어댑터에만 적용한다. 기존 기술 점수 계산의 support/contradict/unknown 선별 상한은 유지하고, 검증된 검색 출처를 보고서 재료로 추가 보존한다. 기술·논문·권리 질의를 분산하고 각 질의 결과를 합치되 미검증 상태를 유지한다. FAISS와 조사 원문을 연결할 때 동일 문서·본문으로 복원된 중복 청크는 한 번만 사용한다.
+
+
+### 보고서 발행 v3 추가 계약
+
+`quality_result`의 fail/unknown 중 담당 작업이 지정되고 실행 여유가 있으면 재작업한다. unknown에 해결 가능한 작업이 없으면 미완료 종료한다. 같은 결과를 반복 수집하면 무진행 감지가 종료시키며, 수정하지 않은 보고서를 의미 평가만 반복해 통과시키지 않는다. 명시적 근거 충분성 False는 E/F 진입을 차단하고 재조사 경로가 소진되면 incomplete로 끝난다.
+
+`EvaluationReport.classification`은 CompanyProfile/MarketCategory에서 결정적으로 생성하여 snapshot에 표시한다. G는 현재 State의 분류와 일치하는지 검사한다. `Evidence.financial_observation`은 연간 결산일·지표·단위·연결범위이며 D의 공시 당기/전기 값에 붙는다. `financial_charts`는 이 메타데이터가 있는 활성 근거에서만 구성하고 G가 값/출처/기간 일치를 재검증한다. 시계열은 동일 기업·지표·단위·연결범위·결산 월일의 최소 두 기간을 요구한다. 결측은 0으로 대체하지 않으며 모델 생성 차트는 채택하지 않는다. 경쟁사 비교는 현재 기업별 근거 계약을 우회해 섞지 않고 제외한다. PDF 그래프와 수치표 모두 10쪽 상한에 포함된다.
+
+최종 저장 직전 PDF가 10쪽을 초과해도 format 실패(실제 쪽수·축약 질문)를 현재 보고서 버전에 기록하고 동일 체크포인트에서 Supervisor → F → G로 복귀한다. 기존 attempts/step 예산을 초기화하지 않으며, 상한 소진 때만 incomplete로 종료한다.

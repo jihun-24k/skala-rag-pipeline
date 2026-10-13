@@ -82,3 +82,21 @@ def test_offline_mode_preserves_missing_financials_and_unscored_decision():
     result = make_decider(None)(None, None, financial.assessment, [])
     assert result.decision.total_score is None
     assert result.scores == {}
+
+
+def test_financial_annual_comparatives_keep_scope_unit_and_source():
+    data = FinancialData(revenue=FinancialValue(value=100, previous_value=0, unit='KRW', source='dart',
+        as_of='2025-12-31', previous_as_of='2024-12-31', receipt_no='123',
+        report_type='annual', statement_scope='consolidated'))
+    agent = SimpleNamespace(normalizer=FinancialNormalizer(),
+        collector=SimpleNamespace(collect=lambda _: SimpleNamespace(financials=data, source_reports=[])))
+    result = FinancialAnalyzerAdapter(agent)(profile(), None, None)
+    assert len(result.evidence) == 2
+    current, previous = result.evidence
+    assert previous.value == 0  # actual zero, not a missing value
+    assert previous.financial_observation.period_end == date(2024, 12, 31)
+    assert current.source_uri == previous.source_uri
+    assert current.financial_observation.statement_scope == 'consolidated'
+    data.revenue.report_type = 'half_year'
+    partial = FinancialAnalyzerAdapter(agent)(profile(), None, None)
+    assert len(partial.evidence) == 1 and partial.evidence[0].financial_observation is None

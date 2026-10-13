@@ -12,7 +12,7 @@ from skala_rag.agents import AnalysisResult, ClassificationResult, DecisionResul
 from skala_rag.agents.report import (
     Argument, CompetitionDraft, CompetitorColumn, DecisionDraft, GroundingJudgment, GroundingVerdict, MarketDraft,
     MarketSizeRow, Paragraph, Risk, SectionDraft, Sentence, SummaryDraft, TeamDraft, TeamRow, _suffix_same_year,
-    make_report_writer, render_markdown,
+    build_evaluation_report, make_report_writer, render_markdown,
 )
 from skala_rag.graph import build_investment_graph
 from skala_rag.models import (
@@ -226,3 +226,123 @@ def test_team_table_founder_row():
     table = _team_table(draft, rnd)
     assert "| 창업자 | 홍길동" in table            # slot 없이도 '대표이사'로 창업자 판별
     assert "| 기술책임자 | 확인 불가 |" in table and "| 기타 핵심인력 | 연구원" in table
+
+
+def evaluation_state():
+    from skala_rag.models.orchestration import CitedClaim, EvaluationSummary, PerspectiveResult
+
+    profile, *_ = inputs()
+    research = PerspectiveResult(view='technology', findings=[
+        CitedClaim(text='블록 분류 작업에서 시간이 단축됐다.', evidence_ids=['EVD-001']),
+        CitedClaim(text='제품 페이지와 개발자 문서의 무게가 서로 다르다.', evidence_ids=['EVD-002']),
+    ], missing_facts=[MissingFact(field='장기 가동률', reason='공개 자료 미확보',
+        sources_checked=['개발자 문서'], attempted_queries=['로브로스 장기 가동률'])])
+    compressed = research.model_copy(deep=True)
+    compressed.findings = compressed.findings[:1]
+    return dict(company_profile=profile, as_of_date='2026-09-30', analysis_revision=2,
+        evidence=EVIDENCE[:2], perspectives={'technology': research}, quality_result=None,
+        evaluation_summary=EvaluationSummary(perspectives=[compressed],
+            limitations=['장기 운영 신뢰성을 확정할 수 없음'], analysis_revision=2))
+
+
+def test_evaluation_writer_restores_details_lost_in_synthesis_without_mutating_state():
+    state = evaluation_state()
+    import copy
+    before = copy.deepcopy(state)
+    report = build_evaluation_report(state, ['검증 조건과 한계를 상세히 작성'])
+    tech = next(p for p in report.perspectives if p.view == 'technology')
+    assert len(tech.findings) == 2  # 종합 요약에서 빠진 반대·상충 근거도 보존
+    assert report.references['EVD-002'] == EVIDENCE[1].source_uri
+    assert report.analysis_revision == 2
+    assert '로브로스' in report.summary and '생성 모델 없이' in report.summary
+    assert state == before
+
+
+def test_evaluation_writer_supplies_full_evidence_and_rewrite_instructions():
+    from skala_rag.models.orchestration import EvaluationReport
+
+    state = evaluation_state()
+    calls = []
+    def generate(schema, instruction, payload):
+        calls.append((instruction, payload))
+        assert schema is EvaluationReport
+        return payload['draft']
+
+    report = build_evaluation_report(state, ['무게의 상충을 설명'], generate)
+    instruction, payload = calls[0]
+    assert payload['evidence'][1]['claim_text'] == EVIDENCE[1].claim_text
+    assert payload['evidence'][1]['source_uri'] == EVIDENCE[1].source_uri
+    assert len(payload['research_perspectives'][0]['findings']) == 2
+    assert payload['instructions'] == ['무게의 상충을 설명']
+    assert '시험 과제·조건·결과' in instruction and '근거가 부족하면' in instruction
+    assert report.analysis_revision == 2
+
+
+def test_evaluation_body_exposes_missing_fact_searches_and_preserves_headings(tmp_path):
+    from skala_rag.agents.report import render_evaluation_perspective
+    from skala_rag.pdf_report import render_evaluation_pdf
+    from skala_rag.runtime import render_evaluation_markdown
+    from pypdf import PdfReader
+
+    report = build_evaluation_report(evaluation_state(), [])
+    text = render_evaluation_perspective(report.perspectives[0])
+    assert '확인한 자료: 개발자 문서' in text
+    assert '조사한 질문: 로브로스 장기 가동률' in text
+    markdown = render_evaluation_markdown(report)
+    assert markdown.startswith('# 로브로스 평가 보고서') and '## 14. REFERENCE' in markdown
+    pdf = render_evaluation_pdf(report, tmp_path / 'evaluation.pdf')
+    reader = PdfReader(pdf)
+    pdf_text = '\n'.join(p.extract_text() for p in reader.pages)
+    assert len(reader.pages) <= 10 and '장기 가동률' in pdf_text
+    assert 'SUMMARY' in pdf_text and 'REFERENCE' in pdf_text
+    assert '로브로스 평가 보고서' in pdf_text
+    assert reader.metadata.title == '로브로스 평가 보고서'
+    from skala_rag.models.orchestration import REPORT_OUTLINE
+    for _, title in REPORT_OUTLINE:
+        assert '## ' + title in markdown and title in pdf_text
+    assert markdown.index('13. LIMITATIONS') < markdown.index('14. REFERENCE')
+
+
+def test_financial_charts_are_provider_grounded_and_rendered_in_financials(tmp_path):
+    from skala_rag.models.investment import Evidence, FinancialObservation
+    from skala_rag.models.orchestration import EvaluationReport
+    from skala_rag.agents.report import attach_financial_charts, default_evaluation_sections, evaluation_claims
+    from skala_rag.pdf_report import render_evaluation_pdf
+    from pypdf import PdfReader
+    report = EvaluationReport(company_name='테스트 기업', summary='검증용 가상 수치', perspectives=[], analysis_revision=1)
+    report.sections = default_evaluation_sections(report)
+    evidence = {str(year): Evidence(evidence_id=str(year), claim_text='fixture', stance='support',
+        source_type='regulatory', source_grade='A', source_uri='https://example.test/filing',
+        company_id='fixture', value=value, financial_observation=FinancialObservation(
+            metric='operating_income', period_end=f'{year}-12-31', unit='KRW', statement_scope='separate'))
+        for year, value in [(2024, -100), (2025, 200)]}
+    report = attach_financial_charts(report, evidence)
+    assert len(report.financial_charts) == 1
+    assert [p.value for p in report.financial_charts[0].points] == [-100, 200]
+    assert {eid for c in evaluation_claims(report) for eid in c.evidence_ids} == {'2024', '2025'}
+    path = render_evaluation_pdf(report, tmp_path / 'chart.pdf')
+    pages = PdfReader(path).pages
+    text = '\n'.join(p.extract_text() for p in pages)
+    assert len(pages) <= 10
+    assert text.index('9. FINANCIALS') < text.index('영업이익 연도별 변화') < text.index('10. VALUATION')
+    assert '-100' in text and '200' in text
+    evidence['2025'].financial_observation.statement_scope = 'consolidated'
+    assert not attach_financial_charts(report, evidence).financial_charts
+    assert not attach_financial_charts(report, {}).financial_charts
+
+
+def test_classification_is_preserved_even_when_writer_omits_it():
+    from skala_rag.models import MarketCategory
+    from skala_rag.runtime import render_evaluation_markdown
+    state = evaluation_state()
+    state['market_category'] = MarketCategory(industry='로봇', sub_industry='휴머노이드',
+        target_market=['제조'], customer_type=['기업'])
+    def generate(schema, instruction, payload):
+        output = payload['draft']
+        output['classification'] = {'유형': '잘못된 모델 분류'}
+        return output
+    report = build_evaluation_report(state, [], generate)
+    markdown = render_evaluation_markdown(report)
+    assert report.classification['산업 / 세부 산업'] == '로봇 / 휴머노이드'
+    assert '잘못된 모델 분류' not in markdown
+    assert markdown.index('2. INVESTMENT SNAPSHOT') < markdown.index('기업 분류') < markdown.index('3. BUSINESS IDEA')

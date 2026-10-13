@@ -46,6 +46,36 @@ class FinancialAnalyzerAdapter:
                 stance='support', source_type='regulatory', source_grade='A', source_uri=uri,
                 locator=f'{item.receipt_no or item.source}:{field}:{item.as_of}',
                 company_id=profile.company_id, value=item.value, confidence=None))
+        # Preserve annual comparative amounts from the SAME filing/scope/unit.
+        # Missing values never become zero; quarterly amounts are not annualized.
+        from skala_rag.models.investment import FinancialObservation
+        import math
+        for e in list(evidence):
+            field = e.evidence_id.rsplit(':', 1)[-1]
+            item = getattr(normalized, field)
+            if (field == 'total_funding' or item.report_type != 'annual'
+                    or not item.statement_scope or not item.unit or not item.receipt_no
+                    or e.value is None or not math.isfinite(e.value)):
+                continue
+            e.financial_observation = FinancialObservation(metric=field,
+                period_end=item.as_of, unit=item.unit, statement_scope=item.statement_scope)
+            if item.previous_value is None or not math.isfinite(item.previous_value) or not item.previous_as_of:
+                continue
+            try:
+                prior = date.fromisoformat(item.previous_as_of)
+            except ValueError:
+                continue
+            current = date.fromisoformat(item.as_of)
+            if prior >= current or prior.year != current.year - 1 or prior.month != current.month:
+                continue
+            previous = e.model_copy(deep=True)
+            previous.evidence_id = e.evidence_id + ':previous'
+            previous.value = item.previous_value
+            previous.financial_observation = e.financial_observation.model_copy(update={'period_end': prior})
+            previous.claim_text = f'{field}: {item.previous_value:g} {item.unit} ({prior.isoformat()}); 동일 공시의 전기 비교 수치'
+            previous.locator = f'{item.receipt_no}:{field}:{prior.isoformat()}:comparative'
+            evidence.append(previous)
+        # Include comparative points in the evidence contract as well.
         for report in collected.source_reports:
             if report.error or report.status.value != 'available':
                 missing.append(MissingFact(field=f'source:{report.source}',

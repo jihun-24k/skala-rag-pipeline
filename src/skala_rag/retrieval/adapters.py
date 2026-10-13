@@ -45,9 +45,10 @@ class FaissMarketRetriever:
         paths = [d.locator for d in eligible if d.locator]
         if not paths:
             return []
-        hits = self.retriever.search(RetrievalQuery(query=query, top_k=min(limit, 100),
+        hits = self.retriever.search(RetrievalQuery(query=query, top_k=min(max(limit * 4, limit), 100),
                            source_paths=paths, fetch_k=self.fetch_k))
         result = []
+        seen = set()
         for hit in hits:
             path = unicodedata.normalize('NFC', hit.source_path)
             for doc in eligible:
@@ -60,7 +61,10 @@ class FaissMarketRetriever:
                     text, offset = doc.text, 0
                 else:
                     text = hit.text
-                result.append(RetrievedChunk(hit.chunk_id, doc, text, offset, hit.score))
+                identity = (doc.document_id, text)
+                if identity not in seen:
+                    result.append(RetrievedChunk(hit.chunk_id, doc, text, offset, hit.score))
+                    seen.add(identity)
                 break
             if len(result) >= limit:
                 break

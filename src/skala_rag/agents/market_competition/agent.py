@@ -92,7 +92,9 @@ class MarketCompetitionAgent:
                 evidence[c.chunk_id] = Evidence(
                     evidence_id=c.chunk_id, claim_text=c.text, stance='unknown',
                     source_type=c.document.source_type, source_grade=c.document.source_grade,
-                    source_uri=c.document.source_url,
+                    source_uri=c.document.source_url, source_title=c.document.title,
+                    published_at=c.document.published_at, company_id=profile.company_id,
+                    source_event_id=c.document.document_id, independent=c.document.independent,
                     locator=f'{c.document.locator or c.document.document_id}#char={c.offset}', confidence=0,
                 )
             market.evidence_ids = list(evidence)
@@ -125,7 +127,9 @@ class MarketCompetitionAgent:
                 evidence[eid] = Evidence(
                     evidence_id=eid, claim_text=ref.quote, stance='unknown',
                     source_type=c.document.source_type, source_grade=c.document.source_grade,
-                    source_uri=c.document.source_url,
+                    source_uri=c.document.source_url, source_title=c.document.title,
+                    published_at=c.document.published_at, company_id=profile.company_id,
+                    source_event_id=c.document.document_id, independent=c.document.independent,
                     locator=f'{c.document.locator or c.document.document_id}#char={c.offset+c.text.index(ref.quote)}',
                     confidence=0,  # Exact quote validation is not factual/semantic confidence.
                 )
