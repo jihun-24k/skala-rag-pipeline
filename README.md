@@ -169,6 +169,12 @@ uv run skala-rag index search --index storage/indexes/demo-v1 --query "로봇 �
 - 현재 `main`에서는 일부 테스트가 실패하며, 전체 그래프의 통합 실행을 검증하지 못했습니다.
 - 부족한 데이터에서 수치와 결론을 만드는 대신 출처, 기준일, 미확인 항목을 끝까지 보존하는 것이 이 프로젝트의 핵심 학습입니다.
 
+## 개발 문서
+
+- [공통 개발 규칙](AGENTS.md)
+- [전체 구현 설계](docs/implementation-design.md)
+- [공통 인터페이스 계약](docs/contracts.md)
+
 ## Contributors
 
 | 이름 | 담당 영역 |
