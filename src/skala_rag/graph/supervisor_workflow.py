@@ -52,11 +52,13 @@ def error_info(node, task_id, attempt, exc) -> ErrorInfo:
     # safe fixed guidance, and a correlation ID instead of arbitrary exception text.
     name = type(exc).__name__
     retryable = isinstance(exc, (TimeoutError, ConnectionError)) or name in {
-        'ReadTimeout', 'ConnectTimeout', 'ConnectError', 'RateLimitError', 'APIConnectionError', 'APITimeoutError'}
+        'LengthFinishReasonError', 'ReadTimeout', 'ConnectTimeout', 'ConnectError', 'RateLimitError', 'APIConnectionError', 'APITimeoutError'}
     status_code = getattr(exc, 'status_code', None)
     if isinstance(status_code, int) and (status_code == 429 or status_code >= 500):
         retryable = True
     message = '일시적 외부 호출 실패' if retryable else '작업 실행 또는 출력 계약 검증 실패'
+    if name == 'LengthFinishReasonError':
+        message = '모델 출력 길이 초과; 짧은 출력으로 제한 재시도 필요'
     if name == 'ValidationError' and hasattr(exc, 'errors'):
         # Field paths/types only; never echo input values or model/source text.
         failures = exc.errors(include_input=False, include_url=False)[:5]
@@ -119,7 +121,9 @@ def build_supervisor_graph(agents: OrchestrationAgents, *, checkpointer=None, re
                 if decision.action == 'retry':
                     retries[task_id] = retries.get(task_id, 0) + 1
                 tasks.append(TaskRequest(task_id=task_id, agent=agent, attempt=attempts[agent],
-                    questions=decision.questions, reason=safe_text(decision.reason),
+                    questions=(decision.questions + ['출력 길이 제한 재시도: 관점별 핵심 주장 3개 이내, 주장당 2문장으로 작성하고 긴 원문을 복사하지 마세요.']
+                        if decision.action == 'retry' and any(e.node == agent and e.type == 'LengthFinishReasonError'
+                            for e in state['task_errors'].values()) else decision.questions), reason=safe_text(decision.reason),
                     based_on_revision=state['analysis_revision']))
             update.update(pending_tasks=tasks, attempts=attempts, retry_counts=retries)
         record('supervisor', {'action': decision.action, 'targets': decision.targets,

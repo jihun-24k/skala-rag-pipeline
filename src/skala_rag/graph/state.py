@@ -160,7 +160,7 @@ class SupervisorState(TypedDict, total=False):
     pending_tasks: list[TaskRequest]  # Supervisor의 담당자·질문·시도 번호; dispatch가 실행.
     task_status: dict[str, str]  # collect가 기록한 작업별 최신 성공/부족/불가/실패 상태.
     next_action: SupervisorDecision  # Supervisor의 현재 대상·선택 이유·종료 판단.
-    attempts: dict[str, int]  # Supervisor가 예약한 agent별 총 시도 수; 최초 호출 포함.
+    attempts: dict[str, int]  # Supervisor가 예약한 agent별 총 시도 수; 조사 기본 4회 = 최초 1 + 재조사 최대 3.
     stagnant_agents: list[str]  # collect가 동일 결과 반복을 감지; 무의미한 재조사 차단.
     research_sufficient: bool | None  # 충분성 판단; False면 E/F 진입 차단, 새 연구 시 초기화.
 

@@ -291,9 +291,13 @@ def test_evaluation_body_exposes_missing_fact_searches_and_preserves_headings(tm
     assert report.perspectives[0].missing_facts[0].attempted_queries == ['로브로스 장기 가동률']
     markdown = render_evaluation_markdown(report)
     assert markdown.startswith('# 로브로스 평가 보고서') and '## 14. REFERENCE' in markdown
+    report.perspectives[0].missing_facts[0].sources_checked.append('tech:opaque-search-id')
+    original = report.model_dump()
     pdf = render_evaluation_pdf(report, tmp_path / 'evaluation.pdf')
     reader = PdfReader(pdf)
     pdf_text = '\n'.join(p.extract_text() for p in reader.pages)
+    assert report.model_dump() == original
+    assert 'tech:opaque-search-id' not in pdf_text
     assert len(reader.pages) <= 10 and '장기 가동률' in pdf_text
     assert 'SUMMARY' in pdf_text and 'REFERENCE' in pdf_text
     assert '로브로스 평가 보고서' in pdf_text
@@ -383,3 +387,39 @@ def test_uncited_section_output_is_a_gap_not_a_fact_or_fake_citation():
     assert result['sections'][0]['missing_facts']
     assert '999' not in str(result)
     assert payload['sections'][0]['findings']  # no mutation
+
+
+def test_missing_reference_is_filled_from_verified_evidence_without_hiding_wrong_urls():
+    from skala_rag.agents.report import attach_reference_details
+    from skala_rag.models.orchestration import EvaluationReport, PerspectiveResult, CitedClaim
+    evidence = ev('known', '검증된 사실')
+    r = EvaluationReport(summary='사실 [known]', analysis_revision=1, perspectives=[
+        PerspectiveResult(view='technology',findings=[CitedClaim(text='검증된 사실',evidence_ids=['known'])])])
+    fixed = attach_reference_details(r, {'known':evidence})
+    assert fixed.references['known'] == evidence.source_uri
+    assert r.references == {}
+    r.references['unused'] = 'https://unused.example/'
+    assert 'unused' not in attach_reference_details(r, {'known':evidence, 'unused':ev('unused','미사용')}).references
+    r.references['known'] = 'https://wrong.example/'
+    assert attach_reference_details(r, {'known':evidence}).references['known'] == 'https://wrong.example/'
+
+
+def test_investment_traffic_light_preserves_missing_scores(tmp_path):
+    from skala_rag.agents.report import investment_snapshot, business_score_table
+    from skala_rag.models.orchestration import EvaluationReport, BusinessScore, BusinessAssessment
+    from skala_rag.pdf_report import render_evaluation_pdf
+    from pypdf import PdfReader
+    report = EvaluationReport(summary='fixture', analysis_revision=1, perspectives=[],
+        business_scores=[BusinessScore(criterion=k, score=v, rationale='검증용 근거')
+            for k,v in [('team',4),('market',3),('technology',2),('traction',None)]],
+        business_assessment=BusinessAssessment(observed_score=60,coverage_percent=55,reason="검증용 판단 유보"))
+    before = report.model_dump()
+    assert '통과 1/6항목' in investment_snapshot(report)
+    table = business_score_table(report)
+    for label in ['초록 · 통과','노랑 · 부분 충족','빨강 · 미충족','노랑 · 미확인']:
+        assert label in table
+    pdf = render_evaluation_pdf(report,tmp_path/'signals.pdf')
+    text = '\n'.join(p.extract_text() for p in PdfReader(pdf).pages)
+    assert text.index('종합 투자평가') < text.index('SUMMARY')
+    assert '60/100점' in text and '55%' in text
+    assert report.model_dump() == before

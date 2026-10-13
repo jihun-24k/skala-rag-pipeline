@@ -246,7 +246,7 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
         questions: list[str] = Field(min_length=1)
 
     class Sufficiency(BaseModel):
-        sufficient: bool
+        blocking_issue: Literal['none', 'identity', 'no_supported_claims', 'unresolved_core_conflict']
         reason: str
         targets: list[Literal['B', 'C', 'D']] = Field(default_factory=list)
         questions: list[str] = Field(default_factory=list)
@@ -302,7 +302,8 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
                 '요청한 관점만 중립적으로 분석한다. 각 주장에 제공된 evidence_id만 연결한다. '
                 '실제 시험·제품 조건, 독립 출처와 반대 근거를 포함한다. '
                 '보고서의 사업·제품·시장·경쟁·실적·팀·재무·기업가치 목차에 활용할 구체적인 사실과 조건을 '
-                '담당 관점 안에 보존하고 지나치게 한 문장으로 요약하지 않는다. 자료에 없는 내용은 MissingFact로 남긴다.',
+                '담당 관점 안에 보존한다. 관점별 findings는 최대 5개, 문단당 3문장 이내로 작성한다. '
+                '원문 전체를 복사하지 않는다. 자료에 없는 내용은 MissingFact로 남긴다.',
                 {'views': views, 'questions': request.questions,
                  'assessment': result.assessment.model_dump(mode='json'),
                  'evidence': [e.model_dump(mode='json') for e in evidence]})
@@ -327,6 +328,8 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
             limitations.append('기업 분류 미확정: 분석 미수행, 분류 확인을 위한 제한 보고')
         if state['task_errors']:
             limitations.extend(f'{e.node}: {e.message}' for e in state['task_errors'].values())
+        if state['next_action'].reason.startswith('재조사 종료'):
+            limitations.append('추가 조사 후에도 확인되지 않은 항목이 있어 확보된 근거 범위로 평가를 제한함.')
         if state.get('research_sufficient') is False:
             limitations.append('Supervisor 근거 충분성 미충족: ' + state['next_action'].reason)
         payload = EvaluationSummary(perspectives=perspectives, limitations=limitations,
@@ -334,7 +337,8 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
         if model:
             payload = invoke_structured(model, EvaluationSummary,
                 '네 관점을 중립적으로 정리한다. 주어진 근거와 한계를 보존하고 투자·구매 추천이나 '
-                '새 사실을 추가하지 않는다. 재작업 지시를 반영하고 analysis_revision을 유지한다.',
+                '새 사실을 추가하지 않는다. 모든 설명·한계는 한국어로 작성하고 내부 코드와 라우팅 로그는 '
+                '포함하지 않는다. 재작업 지시를 반영하고 analysis_revision을 유지한다.',
                 {'summary': payload.model_dump(mode='json'), 'instructions': request.questions})
         return payload
 
@@ -392,7 +396,12 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
         if model and decision.action == 'synthesize' and not classification_unresolved(state):
             from skala_rag.agents.supervisor import available
             judgement = invoke_structured(model, Sufficiency,
-                '현재 확보한 근거로 범위를 제한한 기업 평가 보고서를 작성할 수 있는지 판단한다. '
+                '완전한 투자 판단이 아니라 확보된 근거를 설명하는 제한 보고서 작성 가능성을 판단한다. '
+                'blocking_issue는 none이 기본이다. 재무·이해관계자·고객·팀·시장규모·경쟁사 정보 없음, '
+                '독립 검증 없음, 단일 출처라는 이유는 차단 사유가 아니다. 이들은 확인 불가와 한계로 적는다. '
+                '회사가 식별되고 출처로 설명할 사실이 하나라도 있으면 none이다. '
+                'identity는 회사 오인, no_supported_claims는 인용 가능한 사실이 전무, '
+                'unresolved_core_conflict는 보고 대상을 특정할 수 없는 핵심 모순일 때만 사용한다. '
                 '충분성은 모든 목차의 모든 정보가 완비되었는지가 아니라, 보고서에 쓸 핵심 주장을 '
                 '실제 제공된 출처로 뒷받침하고 확인된 사실·회사 발표·미확인 사항·조건과 모순을 구분할 수 있는지다. '
                 '재무 API 미사용·비공개 매출·미확인 시장 규모·팀 경력은 해당 항목을 확인 불가로 표시하고 '
@@ -402,25 +411,28 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
                 '기업 동일성·주요 제품 구분·핵심 사실이 검증 불가하거나 모순을 보고서에서 정직하게 '
                 '설명할 수 없으면 불충분이다. 존재하지 않는 근거를 만들어 통과시키지 않는다. '
                 '추가 조사가 실질적으로 핵심 주장을 보완할 수 있을 때만 B/C/D 담당과 새로운 질문을 제시한다. '
+                '선택 항목도 새로운 출처를 찾을 구체적 질문이 있으면 targets에 담당을 적어 재조사할 수 있다. '
+                '단순 미공개 정보는 targets를 비운다. 최대 추가 3회 후 확인 불가와 한계로 남긴다. '
                 '같은 미확인 정보의 반복 요청을 피한다. 질문별로 지원 가능한 주장 범위를 기준으로 판단한다.',
                 {'query': state['query'], 'company': state['company_profile'].model_dump(mode='json'),
                  'perspectives': [p.model_dump(mode='json') for p in state['perspectives'].values()],
                  'evidence': [e.model_dump(mode='json') for e in state['evidence']],
                  'attempts': state['attempts'], 'financial_api_enabled': financial_api})
+            sufficient = judgement.blocking_issue == 'none'
             targets = list(dict.fromkeys(a for a in judgement.targets if (a != 'D' or financial_api) and available(state, a)
                 and a not in state['stagnant_agents']
                 and not any(e.node == a and not e.retryable for e in state['task_errors'].values())))
-            if not judgement.sufficient and targets and judgement.questions:
+            if targets and judgement.questions:
                 return SupervisorDecision(action='research', targets=targets,
                     reason=judgement.reason, questions=judgement.questions,
-                    based_on_revision=state['analysis_revision'], sufficient=False)
-            if not judgement.sufficient:
+                    based_on_revision=state['analysis_revision'], sufficient=sufficient)
+            if not sufficient:
                 return SupervisorDecision(action='finish', terminal_status='incomplete',
                     reason='근거 부족 및 재조사 경로 소진: ' + judgement.reason,
                     based_on_revision=state['analysis_revision'], sufficient=False)
-            return decision.model_copy(update={'sufficient': judgement.sufficient,
-                'reason': judgement.reason,
-                'questions': judgement.questions or decision.questions})
+            return decision.model_copy(update={'sufficient': sufficient,
+                'reason': ('재조사 종료·확인 불가 항목은 한계로 명시: ' if judgement.targets and not targets else '') + judgement.reason,
+                'questions': ['확인되지 않은 재무·고객·팀·이해관계자 정보는 한계로 남기고 확보된 사실만 종합하세요.'] + (judgement.questions or decision.questions)})
         return decision
 
     return OrchestrationAgents(workers={
@@ -430,8 +442,8 @@ def build_orchestration_agents(*, research_root=None, retriever=None, index_coun
 
 
 def render_evaluation_markdown(report):
-    from skala_rag.agents.report import evaluation_report_sections, evaluation_reference_lines
-    sections = ['# ' + report.title]
+    from skala_rag.agents.report import evaluation_report_sections, evaluation_reference_lines, investment_snapshot
+    sections = ['# ' + report.title, investment_snapshot(report)]
     for title, body in evaluation_report_sections(report):
         sections.extend(['## ' + title, body])
     sections += ['## 14. REFERENCE', *evaluation_reference_lines(report)]

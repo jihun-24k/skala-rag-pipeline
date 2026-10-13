@@ -30,10 +30,10 @@ class ErrorInfo(DomainModel):
 
 
 class Limits(DomainModel):
-    max_attempts_per_agent: int = Field(default=2, ge=1, le=10)
+    max_attempts_per_agent: int = Field(default=4, ge=1, le=10)
     max_report_attempts: int = Field(default=2, ge=1, le=10)
-    max_supervisor_steps: int = Field(default=12, ge=1, le=100)
-    max_steps: int = Field(default=40, ge=4, le=300)
+    max_supervisor_steps: int = Field(default=20, ge=1, le=100)
+    max_steps: int = Field(default=80, ge=4, le=300)
     max_errors: int = Field(default=4, ge=1, le=100)
 
 

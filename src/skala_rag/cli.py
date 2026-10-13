@@ -204,7 +204,7 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     limits = Limits(max_attempts_per_agent=args.max_attempts,
         max_report_attempts=args.max_report_attempts, max_errors=args.max_errors,
         max_steps=args.max_steps, max_supervisor_steps=args.max_supervisor_steps)
-    configuration = {'report_contract': 'assignment-v4',
+    configuration = {'report_contract': 'assignment-v5',
         'retriever': args.retriever, 'model': args.model, 'judge_model': args.judge_model,
         'financial_api': args.financial_api, 'research_root': str(args.research_root.resolve()) if args.research_root else None,
         'index': str(args.index.resolve()) if args.retriever == 'faiss' else None,
@@ -378,11 +378,11 @@ def _parser(prog: str = 'skala-rag') -> argparse.ArgumentParser:
     orchestrate.add_argument('--langsmith', action='store_true', help='Export redacted node spans; requires LANGSMITH_API_KEY')
     orchestrate.add_argument('--langsmith-project', default=None)
     orchestrate.add_argument('--no-pdf', action='store_true')
-    orchestrate.add_argument('--max-attempts', type=int, default=2)
+    orchestrate.add_argument('--max-attempts', type=int, default=4, help='Total research attempts including the initial call (4 = initial + 3 re-investigations)')
     orchestrate.add_argument('--max-report-attempts', type=int, default=2)
     orchestrate.add_argument('--max-errors', type=int, default=4)
-    orchestrate.add_argument('--max-steps', type=int, default=40)
-    orchestrate.add_argument('--max-supervisor-steps', type=int, default=12)
+    orchestrate.add_argument('--max-steps', type=int, default=80)
+    orchestrate.add_argument('--max-supervisor-steps', type=int, default=20)
     orchestrate.set_defaults(handler=_orchestrate_command)
 
     report = commands.add_parser('report', help='Render a saved analysis JSON to PDF or Markdown')

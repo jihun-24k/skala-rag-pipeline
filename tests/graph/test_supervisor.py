@@ -116,6 +116,7 @@ def test_evaluation_pdf_preserves_previous_report_outline(tmp_path):
     from skala_rag.pdf_report import render_evaluation_pdf
     agents, _ = researchers()
     report = run(agents)['report']
+    original = report.model_dump(mode='json')
     path = render_evaluation_pdf(report, tmp_path / 'report.pdf')
     pages = PdfReader(str(path)).pages
     text = '\n'.join(page.extract_text() for page in pages)
@@ -123,6 +124,11 @@ def test_evaluation_pdf_preserves_previous_report_outline(tmp_path):
     assert 'SUMMARY' in text and 'BUSINESS IDEA' in text and 'FINANCIALS' in text
     assert '투자 의견' not in text
     assert 'REFERENCE' in text
+    assert '[tech]' not in text and '[market]' not in text
+    assert '[1]' in text and 'https://' not in text
+    uris = [a.get_object().get('/A', {}).get('/URI') for page in pages for a in page.get('/Annots', [])]
+    assert 'https://university.example/paper' in uris
+    assert report.model_dump(mode='json') == original
 
 
 def test_parallel_failures_recover_independently_without_double_counting():
@@ -216,13 +222,11 @@ def test_good_report_runs_separate_quality_node_and_finishes():
     assert supervisor_storage_payload(state)['task_results']
 
 
-def test_only_missing_market_is_researched_again_with_new_question():
+def test_missing_market_is_reported_without_mandatory_research_loop():
     agents, calls = researchers(market_gap=True)
     state = run(agents)
     assert state['status'] == 'passed'
-    assert counts(calls)['C'] == 2 and counts(calls)['B'] == 1
-    requests = [task for agent, task in calls if agent == 'C']
-    assert requests[0].questions != requests[1].questions
+    assert counts(calls)['C'] == 1 and counts(calls)['B'] == 1
     assert state['error_count'] == 0
 
 
@@ -542,3 +546,24 @@ def test_source_concentration_requires_semantic_review_not_automatic_failure():
                                   reason='기업 발표를 독립 성과로 과장')
     checked = ReportEvaluator(lambda *args: semantic)(None, state)
     assert next(i for i in checked.items if i.criterion == 'bias').verdict == 'fail'
+
+
+def test_empty_evidence_still_blocks_partial_report():
+    agents, calls = researchers(overrides={a: lambda task, state: ResearchResult() for a in ('B','C','D')})
+    state = run(agents)
+    assert state['status'] == 'incomplete'
+    assert not counts(calls)['F']
+
+
+def test_output_length_error_retries_once_with_shorter_instruction():
+    base, _ = researchers()
+    class LengthFinishReasonError(Exception):
+        pass
+    def truncated(task, state):
+        if task.attempt == 1:
+            raise LengthFinishReasonError('private response')
+        assert any('출력 길이 제한' in q for q in task.questions)
+        return base.workers['B'](task, state)
+    agents, calls = researchers(overrides={'B': truncated})
+    state = run(agents)
+    assert state['status'] == 'passed' and counts(calls)['B'] == 2

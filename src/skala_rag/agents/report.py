@@ -1344,7 +1344,8 @@ def build_evaluation_report(state: dict, instructions: list[str], generate=None)
     model_draft = draft.model_dump(mode='json', include={'summary', 'perspectives', 'limitations', 'analysis_revision', 'references'})
     raw_report = generate(complete_report, EVALUATION_REPORT_PROMPT +
         '\nsections에 기존 2~13 목차를 모두 직접 작성한다. draft는 조사 입력이며 완성 보고서가 아니다. '
-        '빈 초안의 검증된 분석이 아직 없다는 문구를 복사하지 않는다. 근거가 있는 목차는 '
+        '모든 설명과 한계는 한국어로 작성하고 영문 입력을 그대로 복사하지 않는다. '
+        '같은 한계는 한 번만 명시한다. 빈 초안의 검증된 분석이 아직 없다는 문구를 복사하지 않는다. 근거가 있는 목차는 '
         '확인 사실·의미·조건·한계를 작성하고, 근거가 없는 목차도 왜 판단할 수 없는지와 필요한 자료를 '
         '해당 목차에 구체적으로 설명한다. 내부 조사 질문·agent 이름·CLI 옵션을 보고서 문장에 넣지 않는다. '
         'business_scores의 team/market/technology/traction/moat/scalability를 각각 평가한다. '
@@ -1354,6 +1355,8 @@ def build_evaluation_report(state: dict, instructions: list[str], generate=None)
         '특허만 있으면 기술 점수는 최대 3이며, 실제 제품 적용이라고 추정하지 않는다. '
         'company의 내부 ID나 URL을 evidence_id처럼 인용하지 않는다. 제공된 evidence에 없는 '
         '제품·투자 단계·매출 주장은 쓰지 않고 미확인 항목으로 남긴다. '
+        '서로 다른 제품에 같은 기술·실험 결과를 일괄 적용하지 않는다. 논문 시험 대상과 상용 제품이 '
+        '같다는 근거가 없으면 연구 결과로만 소개하며 특정 제품의 성능으로 쓰지 않는다. '
         '각 평가 이유에 제공된 evidence_id를 연결한다. 기업의 미래 성공·실패나 투자 추천을 단정하지 않는다.', {
         'company': state['company_profile'].model_dump(mode='json'),
         'as_of_date': state['as_of_date'],
@@ -1441,6 +1444,16 @@ def evaluation_claims(report):
 def attach_reference_details(report, evidence):
     # 원문에 없는 저자·제목은 생성하지 않는다. URL 계약과 모델이 낸 잘못된 인용은
     # 그대로 보존하여 G가 실패로 판단할 수 있게 한다.
+    # Reference bookkeeping is deterministic: a valid cited ID already has a
+    # verified source URI. Fill omissions; retain wrong supplied URLs for G to reject.
+    used = {eid for claim in evaluation_claims(report) for eid in claim.evidence_ids}
+    used.update(eid.strip() for group in re.findall(r'\[([^\[\]\n]+)\]', report.summary)
+                for eid in group.split(','))
+    refs = {eid: url for eid, url in report.references.items() if eid in used or eid not in evidence}
+    for eid in sorted(used):
+        if eid in evidence:
+            refs.setdefault(eid, evidence[eid].source_uri)
+    report = report.model_copy(update={'references': refs})
     details = {}
     for eid in report.references:
         if eid in evidence:
@@ -1587,6 +1600,29 @@ def assess_business_report(report, evidence):
     return report.model_copy(update={'business_scores': cleaned, 'business_assessment': assessment, 'references': refs})
 
 
+def investment_signal_label(signal):
+    return {'positive': '초록 · 성장 가능성 긍정', 'concern': '빨강 · 위험 신호',
+            'undetermined': '노랑 · 추가 확인 필요'}[signal]
+
+
+def item_score_label(score):
+    if score is None:
+        return '노랑 · 미확인'
+    return '초록 · 통과' if score >= 4 else '노랑 · 부분 충족' if score == 3 else '빨강 · 미충족'
+
+
+def investment_snapshot(report):
+    """점수와 자료 충족도를 함께 표시한다. 결측 항목은 0점으로 간주하지 않는다."""
+    a = report.business_assessment
+    if a is None:
+        return '종합 투자평가: 미평가 · 노랑 · 추가 확인 필요'
+    score = f'{a.observed_score:g}/100점' if a.observed_score is not None else '미평가'
+    passed = sum(i.score is not None and i.score >= 4 for i in report.business_scores)
+    return (f'종합 투자평가: {score} | {investment_signal_label(a.signal)}\n\n'
+            f'평가 가능 비율 {a.coverage_percent:g}% · 통과 {passed}/6항목 · '
+            '미확인 항목은 점수 산정에서 제외. 성장 가능성과 위험을 함께 검토합니다.')
+
+
 def business_score_table(report):
     from skala_rag.agents.decision_agents.decision import CRITERIA
     a = report.business_assessment
@@ -1599,12 +1635,12 @@ def business_score_table(report):
         '| 평가 항목 | 가중치 | 점수 | 근거 및 한계 |', '|---|---:|---:|---|']
     for item in report.business_scores:
         weight, title = CRITERIA[item.criterion]
-        value = str(item.score) if item.score is not None else '미평가'
+        value = (f'{item.score}/5' if item.score is not None else '미평가') + ' · ' + item_score_label(item.score)
         text = item.rationale.replace('|', '/').replace('\n', ' ')
         if item.evidence_ids:
             text += ' [' + ', '.join(item.evidence_ids) + ']'
         lines.append(f'| {title} | {weight} | {value} | {text} |')
-    lines += [a.reason, '이 분류는 현재 근거의 사업성 신호이며 실제 성공·실패나 투자 추천을 확정하지 않습니다.']
+    lines += [a.reason, '항목: 4~5점 초록(통과), 3점 노랑(부분 충족), 1~2점 빨강(미충족), 미확인 노랑(점수 제외). 종합 점수 = 평가된 항목의 가중 점수 합 ÷ 평가된 가중치 합 × 100. 종합 초록은 평가 비율 50% 이상·70점 이상·기술과 사업 성과 각각 3점 이상일 때, 빨강은 평가 비율 50% 이상·45점 미만이며 부정 근거가 있는 저점 항목이 2개 이상일 때 표시합니다. 나머지는 노랑입니다. 이 분류는 현재 근거의 사업성 신호이며 실제 성공·실패나 투자 추천을 확정하지 않습니다.']
     return '\n\n'.join(lines[:2]) + '\n\n' + '\n'.join(lines[2:-2]) + '\n\n' + '\n\n'.join(lines[-2:]) + '\n\n'
 
 

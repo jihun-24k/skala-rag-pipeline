@@ -88,7 +88,11 @@ class SupervisorPolicy:
                     return choose(action, [target], issue.reason, issue.questions or [QUESTIONS[target]])
             return stop('품질 미달 또는 의미 평가 확인 불가; 재작업 가능 경로 소진')
 
-        if not unresolved:
+        # Missing optional perspectives are report limitations, not automatic rework.
+        supported = {e.evidence_id for e in state['evidence']}
+        has_facts = any(c.evidence_ids and set(c.evidence_ids).issubset(supported)
+                        for p in state['perspectives'].values() for c in p.findings)
+        if not unresolved and not has_facts:
             gaps = [view for view in VIEWS if not state['perspectives'].get(view)
                     or not state['perspectives'][view].findings]
             targets = list(dict.fromkeys(OWNER[v] for v in gaps))
@@ -98,6 +102,9 @@ class SupervisorPolicy:
                 return choose('research', targets, '관점별 핵심 근거 부족',
                               [f'{view} 관점의 확인되지 않은 질문을 다른 출처와 구체적인 적용 사례로 조사하세요.'
                                for view in gaps])
+
+        if not has_facts and not state['task_errors']:
+            return stop('출처에 연결된 사실이 없어 제한 보고서도 작성할 수 없음')
 
         if state.get('research_sufficient') is False:
             return stop('핵심 근거 충분성 미충족; 재조사 후에도 해소되지 않아 작성 보류')

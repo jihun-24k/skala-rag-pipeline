@@ -28,7 +28,7 @@
 | 식별/입력 | run/thread/trace ID, 스키마·설정·자료 버전, 입력 지문으로 재개 호환성 검사 |
 | 현재 산출물 | 기업·분류, `perspectives`, 활성 `evidence`/ID, 평가 정리, 보고서, 품질 verdict |
 | 작업 제어 | 요청·결과, 처리된 키, task 상태, `next_action`, agent별 attempts, 무진행 agent |
-| 반복 예산 | step/Supervisor 횟수와 검증된 `limits`; 각 연구 최대 2회, F/G 각 최대 2회, Supervisor 12회, 전체 40회, 오류 4회 기본값 |
+| 반복 예산 | step/Supervisor 횟수와 검증된 `limits`; 각 연구 최초 1회 + 재조사 최대 3회, F/G 각 최대 2회, Supervisor 20회, 전체 80회, 오류 4회 기본값 |
 | Error-aware | 실행 `status`, 누적 `error_count`, `last_error`, 미해결 `task_errors`, task별 `retry_counts` |
 | 유효성 | `analysis_revision`, `report_revision`으로 이전 분석의 정리·보고서·평가 사용 방지; `research_sufficient`로 현재 분석의 충분성 판단 보존 |
 
@@ -197,3 +197,9 @@ EvaluationReport.business_scores는 여섯 항목의 1~5 또는 null 점수·이
 Supervisor 검색은 동일한 검증 원문의 벡터 검색과 BM25 결과를 교대로 결합해 질의별 limit 안에서 사용한다. 정확한 제품명 검색이 특허 벡터 결과에 밀리는 현상을 줄이며 날짜·회사·출처 필터는 두 검색에 동일하게 적용한다. 기존 analyze 검색 동작은 유지한다.
 
 모델 설정 시 최초 조사도 Supervisor가 요청과 수집 상태에 따라 미조사 B/C/D의 부분집합을 선택한다. 각 담당의 최초 자료 가용성 확인은 필수이나 순서는 고정하지 않는다. 중복/기방문 대상은 코드에서 거부하며 오류·재작업·종료 가드는 우선 적용한다. 모델 미설정 모드에는 기존 결정론적 진단 정책을 둔다.
+
+PDF 표시 계층은 원문 URL별 참고문헌 번호를 부여하여 내부 evidence ID를 짧은 번호로 표시한다. JSON/Markdown의 ID·출처·원문 위치는 유지하며 보고서 모델은 변경하지 않는다. PDF에서만 내부 원문 경로를 생략하고 분류 코드에 한국어 표시명을 사용한다. 점수표는 열 비율을 달리하고 가능한 한 한 페이지에서 유지하며, SUMMARY 물리적 높이 검사는 동일한 본문 글꼴 크기·행간을 사용한다.
+
+assignment-v5: 빈 관점은 자동 재조사 조건에서 제외한다. 최소 한 개의 활성 evidence에 연결된 주장도 없으면 제한 보고서 작성을 차단한다. 충분성 모델의 blocking_issue(none/identity/no_supported_claims/unresolved_core_conflict)는 optional 필드 완비 여부와 구분한다. LengthFinishReasonError는 기존 attempts 예산 안에서 짧은 출력 지시로 재시도한다. PDF URL은 클릭 가능한 표시명으로 출력하고 원래 URI를 링크 주석에 보존한다.
+
+연구별 기본 시도 상한 4 = 최초 1 + 추가 재조사 3. 선택 정보 보완 요청은 sufficient=True 상태로 실행하고 상한/무진행 시 확인 불가를 명시하여 종합으로 진행한다. 전역 Supervisor 20·step 80 상한은 이 재조사 예산을 수용하며 F/G 각 2회는 유지한다. attach_reference_details는 인용된 유효 ID의 누락된 URI만 보충하고 모델이 제공한 잘못된 URI를 덮어쓰지 않는다.

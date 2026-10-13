@@ -204,3 +204,29 @@ def test_initial_supervisor_can_choose_finance_first_from_state(monkeypatch):
     state['attempts']['D'] = 1
     with pytest.raises(ValueError, match='unavailable initial researcher'):
         agents.supervise(state)
+
+
+def test_optional_research_stops_at_three_reinvestigations_and_writes_limits(monkeypatch):
+    import skala_rag.runtime as runtime
+    from skala_rag.graph.supervisor_workflow import initial_state
+    from skala_rag.models import Evidence
+    from skala_rag.models.orchestration import PerspectiveResult, CitedClaim
+    monkeypatch.setattr(runtime, 'build_runtime_agents', lambda **kwargs: SimpleNamespace())
+    class Assessor:
+        def with_structured_output(self, schema):
+            return SimpleNamespace(invoke=lambda messages: schema.model_validate({
+                'blocking_issue':'none', 'reason':'고객 정보는 미확인이나 제품 설명 가능',
+                'targets':['C'], 'questions':['새로운 고객 자료가 있는지 확인']}))
+    agents = runtime.build_orchestration_agents(model=Assessor())
+    state = initial_state('평가', '2026-09-30')
+    ev = Evidence(evidence_id='known', claim_text='제품 소개', stance='support',
+                  source_type='first_party', source_grade='C', source_uri='https://example.test/product')
+    state.update(company_profile=profile(),market_category=MarketCategory(industry='로봇',sub_industry='휴머노이드'),
+        attempts={'A':1,'B':1,'C':1,'D':1}, evidence=[ev],
+        perspectives={'technology':PerspectiveResult(view='technology',findings=[CitedClaim(text='제품 소개',evidence_ids=['known'])])})
+    decision = agents.supervise(state)
+    assert decision.action == 'research' and decision.targets == ['C'] and decision.sufficient
+    state['attempts']['C'] = 4  # Initial + three re-investigations.
+    decision = agents.supervise(state)
+    assert decision.action == 'synthesize' and decision.sufficient
+    assert '한계로 명시' in decision.reason
