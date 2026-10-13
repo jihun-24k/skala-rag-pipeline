@@ -7,6 +7,11 @@ from typing import Annotated, Any
 from pydantic import TypeAdapter
 from typing_extensions import NotRequired, TypedDict
 
+from skala_rag.models.orchestration import (
+    ErrorInfo, EvaluationReport, EvaluationSummary, Limits, PerspectiveResult,
+    QualityVerdict, RunStatus, SupervisorDecision, TaskRequest, TaskResult,
+)
+
 from skala_rag.models import (
     CompanyProfile,
     CompetitorAnalysis,
@@ -75,3 +80,55 @@ def to_storage_payload(output: InvestmentOutput) -> dict[str, Any]:
     """
     validated = _output_adapter.validate_python(output)
     return _output_adapter.dump_python(validated, mode="json")
+
+
+def merge_task_results(current: dict[str, TaskResult], update: dict[str, TaskResult]) -> dict[str, TaskResult]:
+    merged = dict(current)
+    for key, result in update.items():
+        if key in merged and merged[key] != result:
+            raise ValueError(f'Conflicting result for task attempt {key}')
+        merged[key] = result
+    return merged
+
+
+class SupervisorState(TypedDict, total=False):
+    # Payload and recovery identity; source documents and event history stay external.
+    run_id: str
+    thread_id: str
+    trace_id: str
+    schema_version: str
+    input_fingerprint: str
+    config_version: str
+    index_version: str | None
+    query: str
+    as_of_date: str
+    candidate_companies: list[str | dict[str, object]]
+    company_profile: CompanyProfile
+    market_category: MarketCategory
+    current_company: dict[str, object]
+    perspectives: dict[str, PerspectiveResult]
+    evidence: list[Evidence]
+    active_evidence_ids: list[str]
+    evaluation_summary: EvaluationSummary | None
+    report: EvaluationReport | None
+    quality_result: QualityVerdict | None
+    # Workers write only reducer-protected task results; Supervisor/collector own the rest.
+    task_results: Annotated[dict[str, TaskResult], merge_task_results]
+    collected_tasks: list[str]
+    pending_tasks: list[TaskRequest]
+    task_status: dict[str, str]
+    next_action: SupervisorDecision
+    attempts: dict[str, int]
+    stagnant_agents: list[str]
+    research_sufficient: bool | None
+    analysis_revision: int
+    report_revision: int
+    step_count: int
+    supervisor_count: int
+    limits: Limits
+    status: RunStatus
+    termination_reason: str | None
+    error_count: int
+    last_error: ErrorInfo | None
+    task_errors: dict[str, ErrorInfo]
+    retry_counts: dict[str, int]

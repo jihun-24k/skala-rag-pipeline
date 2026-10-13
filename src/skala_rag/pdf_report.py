@@ -35,7 +35,8 @@ def register_font(font_path: Path | None = None) -> str:
 
 
 def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 분석 보고서',
-               font_path: Path | None = None) -> Path:
+               font_path: Path | None = None, sections: list[tuple[str, str]] | None = None,
+               reference_heading: str = '참고문헌') -> Path:
     font = register_font(font_path)
     body = ParagraphStyle('body', fontName=font, fontSize=9, leading=14,
                           wordWrap='CJK', spaceAfter=6, alignment=TA_LEFT)
@@ -119,13 +120,13 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
             elif token.type == 'html_block':
                 story.append(Paragraph(escape(token.content), body))
 
-    sections = [('요약', report.summary), ('기술 분석', report.technology),
+    sections = sections if sections is not None else [('요약', report.summary), ('기술 분석', report.technology),
                 ('시장·경쟁 분석', report.market_competition), ('재무 분석', report.financials),
                 ('위험 및 확인 사항', report.risks), ('투자 판단', report.decision)]
     for name, content in sections:
         story.append(Paragraph(name, heading))
         add_markdown(content)
-    story.append(Paragraph('참고문헌', heading))
+    story.append(Paragraph(reference_heading, heading))
     for index, reference in enumerate(report.references, 1):
         story.append(Paragraph(escape(f'{index}. {reference}'), body))
     if not report.references:
@@ -144,3 +145,22 @@ def render_pdf(report: InvestmentReport, output: Path, *, title: str = '투자 �
         topMargin=18*mm, bottomMargin=20*mm, title=title, author='SKALA RAG')
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return output
+
+
+def render_evaluation_pdf(report, output: Path) -> Path:
+    from skala_rag.models import InvestmentReport
+    labels = {'technology': '기술 성숙도', 'market': '시장성',
+              'stakeholders': '이해관계자', 'domain': '도메인 적용'}
+    sections = [('SUMMARY', report.summary)]
+    for perspective in report.perspectives:
+        content = '\n\n'.join(c.text + ' [' + ', '.join(c.evidence_ids) + ']'
+                                for c in perspective.findings)
+        content += '\n\n' + '\n'.join('확인 불가: ' + m.field + ' — ' + m.reason
+                                        for m in perspective.missing_facts)
+        sections.append((labels[perspective.view], content or '확인된 근거 없음'))
+    sections.append(('한계·추가 확인', '\n'.join(report.limitations) or '기록된 추가 확인 사항 없음'))
+    carrier = InvestmentReport(summary=report.summary, technology='', market_competition='',
+        financials='', risks='', decision='',
+        references=[f'[{eid}] {url}' for eid, url in report.references.items()])
+    return render_pdf(carrier, output, title='Physical AI 다관점 평가 보고서', sections=sections,
+                      reference_heading='REFERENCE')

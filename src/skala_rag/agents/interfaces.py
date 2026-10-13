@@ -77,3 +77,11 @@ class InvestmentAgents:
     analyze_financials: FinancialAnalyzer
     make_decision: DecisionMaker
     write_report: ReportWriter
+
+
+@dataclass(frozen=True, slots=True)
+class OrchestrationAgents:
+    """Workers receive an isolated snapshot; only the coordinator owns control."""
+
+    workers: dict[str, Callable]
+    supervise: Callable | None = None
