@@ -30,11 +30,11 @@ class ErrorInfo(DomainModel):
 
 
 class Limits(DomainModel):
-    max_attempts_per_agent: int = Field(default=3, ge=1, le=10)
-    max_report_attempts: int = Field(default=3, ge=1, le=10)
-    max_supervisor_steps: int = Field(default=20, ge=1, le=100)
-    max_steps: int = Field(default=60, ge=4, le=300)
-    max_errors: int = Field(default=6, ge=1, le=100)
+    max_attempts_per_agent: int = Field(default=2, ge=1, le=10)
+    max_report_attempts: int = Field(default=2, ge=1, le=10)
+    max_supervisor_steps: int = Field(default=12, ge=1, le=100)
+    max_steps: int = Field(default=40, ge=4, le=300)
+    max_errors: int = Field(default=4, ge=1, le=100)
 
 
 class TaskRequest(DomainModel):
@@ -111,7 +111,23 @@ class FinancialChart(DomainModel):
     points: list[FinancialChartPoint] = Field(min_length=2)
 
 
+class BusinessScore(DomainModel):
+    criterion: Literal['team', 'market', 'technology', 'traction', 'moat', 'scalability']
+    score: int | None = Field(default=None, ge=1, le=5)
+    rationale: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class BusinessAssessment(DomainModel):
+    observed_score: float | None = None
+    coverage_percent: float = 0
+    signal: Literal['positive', 'concern', 'undetermined'] = 'undetermined'
+    reason: str
+
+
 class EvaluationReport(DomainModel):
+    business_scores: list[BusinessScore] = Field(default_factory=list)
+    business_assessment: BusinessAssessment | None = None
     classification: dict[str, str] = Field(default_factory=dict)
     financial_charts: list[FinancialChart] = Field(default_factory=list)
     company_name: str = ''

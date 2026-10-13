@@ -1271,7 +1271,8 @@ def build_evaluation_report(state: dict, instructions: list[str], generate=None)
     generate(schema, instruction, payload)는 런타임의 tracing 차단 래퍼다.
     모델이 없을 때는 원래 조사 결과를 보존하고 의미 검증의 한계를 표시한다.
     """
-    from skala_rag.models.orchestration import EvaluationReport, PerspectiveResult, VIEWS, REPORT_OUTLINE
+    from skala_rag.models.orchestration import EvaluationReport, PerspectiveResult, VIEWS, REPORT_OUTLINE, ReportSection, BusinessScore, CitedClaim
+    from skala_rag.models import MissingFact
 
     summary = state['evaluation_summary']
     evidence = {e.evidence_id: e for e in state['evidence']}
@@ -1326,20 +1327,53 @@ def build_evaluation_report(state: dict, instructions: list[str], generate=None)
     draft.sections = default_evaluation_sections(draft)
     if generate is None:
         return attach_reference_details(attach_financial_charts(draft, evidence), evidence)
-    report = EvaluationReport.model_validate(generate(EvaluationReport, EVALUATION_REPORT_PROMPT, {
+    from pydantic import create_model
+    from typing import Literal
+    citation_id = Literal[tuple(evidence)] if evidence else str
+    draft_claim = create_model('DraftReportClaim', __base__=CitedClaim,
+        evidence_ids=(list[citation_id], Field(default_factory=list)))
+    draft_score = create_model('DraftBusinessScore', __base__=BusinessScore,
+        evidence_ids=(list[citation_id], Field(default_factory=list)))
+    draft_section = create_model('DraftReportSection', __base__=ReportSection,
+        findings=(list[draft_claim], Field(default_factory=list)))
+    complete_report = create_model('CompleteEvaluationReport', __base__=EvaluationReport,
+        sections=(list[draft_section], Field(..., min_length=len(REPORT_OUTLINE), max_length=len(REPORT_OUTLINE))),
+        business_scores=(list[draft_score], Field(..., min_length=6, max_length=6)))
+    # The model must author all sections; do not seed it with offline placeholder
+    # sections that it can copy verbatim instead of writing the report.
+    model_draft = draft.model_dump(mode='json', include={'summary', 'perspectives', 'limitations', 'analysis_revision', 'references'})
+    raw_report = generate(complete_report, EVALUATION_REPORT_PROMPT +
+        '\nsections에 기존 2~13 목차를 모두 직접 작성한다. draft는 조사 입력이며 완성 보고서가 아니다. '
+        '빈 초안의 검증된 분석이 아직 없다는 문구를 복사하지 않는다. 근거가 있는 목차는 '
+        '확인 사실·의미·조건·한계를 작성하고, 근거가 없는 목차도 왜 판단할 수 없는지와 필요한 자료를 '
+        '해당 목차에 구체적으로 설명한다. 내부 조사 질문·agent 이름·CLI 옵션을 보고서 문장에 넣지 않는다. '
+        'business_scores의 team/market/technology/traction/moat/scalability를 각각 평가한다. '
+        '자료가 없으면 score=null이고 확인 불가 이유를 적는다. 낮은 점수는 실제 부정 근거가 있을 때만 '
+        '사용한다. 3은 기본 구현/정성적 유용성, 4는 실제 성과 근거, 5는 독립적인 정량·반복 성과다. '
+        '특허 출원·등록은 기술 아이디어의 문서화이며 제품 적용·성능 검증·사업 성과를 입증하지 않는다. '
+        '특허만 있으면 기술 점수는 최대 3이며, 실제 제품 적용이라고 추정하지 않는다. '
+        'company의 내부 ID나 URL을 evidence_id처럼 인용하지 않는다. 제공된 evidence에 없는 '
+        '제품·투자 단계·매출 주장은 쓰지 않고 미확인 항목으로 남긴다. '
+        '각 평가 이유에 제공된 evidence_id를 연결한다. 기업의 미래 성공·실패나 투자 추천을 단정하지 않는다.', {
         'company': state['company_profile'].model_dump(mode='json'),
         'as_of_date': state['as_of_date'],
-        'draft': draft.model_dump(mode='json'),
+        'draft': model_draft,
         'research_perspectives': [p.model_dump(mode='json') for p in state['perspectives'].values()],
         'evidence': [e.model_dump(mode='json') for e in evidence.values()],
         'report_outline': list(REPORT_OUTLINE),
         'instructions': instructions,
         'previous_quality': state['quality_result'].model_dump(mode='json')
             if state.get('quality_result') else None,
-    }))
+    })
+    raw_report = raw_report.model_dump(mode='json') if hasattr(raw_report, 'model_dump') else raw_report
+    raw_report = normalize_uncited_sections(raw_report)
+    report = EvaluationReport.model_validate(raw_report)
+    for section in report.sections:
+        if section.key == 'limitations' and not section.findings and not section.missing_facts:
+            section.missing_facts = [MissingFact(field='분석 한계', reason=text) for text in report.limitations]
     report = report.model_copy(update={'company_name': state['company_profile'].company_name,
         'classification': report_classification(state)})
-    return attach_reference_details(attach_financial_charts(report, evidence), evidence)
+    return attach_reference_details(attach_financial_charts(assess_business_report(report, evidence), evidence), evidence)
 
 
 def render_evaluation_perspective(perspective) -> str:
@@ -1348,27 +1382,35 @@ def render_evaluation_perspective(perspective) -> str:
              + ('\n\n' if re.search(r'(?m)^\s*\|', claim.text) else ' ')
              + '[' + ', '.join(claim.evidence_ids) + ']'
              for claim in perspective.findings]
-    if not parts:
-        parts.append('확보된 자료만으로 이 관점의 판단을 확정할 수 없습니다.')
+    if not parts and not perspective.missing_facts:
+        parts.append('확보된 자료만으로 이 항목의 판단을 확정할 수 없습니다.')
     if perspective.missing_facts:
         parts.append('**미확인 사항 및 추가 조사**')
         checked, queries = [], []
         for missing in perspective.missing_facts:
-            detail = f'확인 불가: {missing.field} — {missing.reason}'
+            labels = {'financial_statements': '재무제표', 'medical_device_certification': '의료기기 인허가',
+                      'stakeholders_unverified_questions': '고객·조직 관련 정보',
+                      'domain_unverified_questions': '실제 적용·사업화 검증',
+                      'not_confirmed_in_retrieved_evidence': '추가 검증 자료'}
+            field = labels.get(missing.field, '추가 확인 정보' if '_' in missing.field else missing.field)
+            reason = missing.reason.replace('--financial-api로 활성화', '추가 재무자료 확보 필요')
+            reason = reason.replace('재무 API 미사용', '재무자료 미확보')
+            detail = f'확인 불가: {field} — {reason}'
             parts.append(detail)
             checked.extend(missing.sources_checked)
             queries.extend(missing.attempted_queries)
         # 같은 검색 이력이 여러 결측 항목에 붙어도 보고서에서는 한 번만 제시한다.
         if checked:
             parts.append('확인한 자료: ' + '; '.join(dict.fromkeys(checked)))
-        if queries:
-            parts.append('조사한 질문: ' + '; '.join(dict.fromkeys(queries)))
+        # Full query/agent instructions remain in structured diagnostic data,
+        # not in the investment report's user-facing narrative.
     return '\n\n'.join(parts)
 
 
 def default_evaluation_sections(report):
     """모델 없는 제한 보고: 근거를 중복 복제하거나 빈 목차를 사실로 채우지 않는다."""
-    from skala_rag.models.orchestration import REPORT_OUTLINE, ReportSection
+    from skala_rag.models.orchestration import REPORT_OUTLINE, ReportSection, BusinessScore, CitedClaim
+    from skala_rag.models import MissingFact
     from skala_rag.models import MissingFact
     assigned = {'business': ('stakeholders',), 'product': ('technology', 'domain'),
                 'market': ('market',)}
@@ -1391,7 +1433,9 @@ def evaluation_claims(report):
     from skala_rag.models.orchestration import CitedClaim
     return [c for part in (report.sections or report.perspectives) for c in part.findings] + [
         CitedClaim(text=f'{chart.title}: {p.period} {p.value:g} {chart.unit}', evidence_ids=[p.evidence_id])
-        for chart in report.financial_charts for p in chart.points]
+        for chart in report.financial_charts for p in chart.points] + [
+        CitedClaim(text=item.rationale, evidence_ids=item.evidence_ids)
+        for item in report.business_scores if item.score is not None and item.evidence_ids]
 
 
 def attach_reference_details(report, evidence):
@@ -1413,7 +1457,7 @@ def evaluation_report_sections(report):
     titles = dict(REPORT_OUTLINE)
     parts = report.sections or default_evaluation_sections(report)
     return [('1. SUMMARY', report.summary)] + [
-        (titles[p.key], (classification_table(report) if p.key == 'snapshot' else '') + render_evaluation_perspective(p) + (financial_chart_tables(report) if p.key == 'financials' else '')) for p in parts]
+        (titles[p.key], (classification_table(report) + business_score_table(report) if p.key == 'snapshot' else '') + render_evaluation_perspective(p) + (financial_chart_tables(report) if p.key == 'financials' else '')) for p in parts]
 
 
 def evaluation_reference_lines(report):
@@ -1491,3 +1535,91 @@ def classification_table(report):
         return value.replace('|', '/').replace('\n', ' ')
     return '**기업 분류**\n\n| 항목 | 분류 결과 |\n|---|---|\n' + '\n'.join(
         f'| {cell(key)} | {cell(value)} |' for key, value in report.classification.items()) + '\n\n'
+
+
+def assess_business_report(report, evidence):
+    """Partial-evidence rubric: missing != negative; never predict real outcomes."""
+    from skala_rag.agents.decision_agents.decision import CRITERIA
+    from skala_rag.models.orchestration import BusinessScore, BusinessAssessment
+    if not report.business_scores:
+        return report.model_copy(update={'business_assessment': None})
+    items = {item.criterion: item for item in report.business_scores}
+    if len(items) != len(report.business_scores):
+        raise ValueError('Duplicate business scoring criterion')
+    cleaned = []
+    refs = dict(report.references)
+    for key in CRITERIA:
+        item = items.get(key, BusinessScore(criterion=key, rationale='근거 미확보'))
+        ids = list(dict.fromkeys(item.evidence_ids))
+        evs = [evidence[eid] for eid in ids if eid in evidence and evidence[eid].source_grade != 'E']
+        if item.score is None or len(evs) != len(ids) or not evs:
+            item = item.model_copy(update={'score': None, 'evidence_ids': [],
+                'rationale': item.rationale if item.score is None else '인용 가능한 근거 부족: ' + item.rationale})
+        else:
+            cap = 3
+            if any(e.source_grade in ('A', 'B') for e in evs):
+                cap = 4
+            if any(e.source_grade in ('A', 'B') and e.independent is True and
+                   (e.value is not None or e.metrics) for e in evs):
+                cap = 5
+            if all(e.stance == 'unknown' for e in evs):
+                item = item.model_copy(update={'score': None, 'evidence_ids': [], 'rationale': '판단 근거 미확인: ' + item.rationale})
+            else:
+                item = item.model_copy(update={'score': min(item.score, cap), 'evidence_ids': ids})
+                for e in evs:
+                    refs[e.evidence_id] = e.source_uri
+        cleaned.append(item)
+    weight = sum(CRITERIA[i.criterion][0] for i in cleaned if i.score is not None)
+    total = (sum(i.score / 5 * CRITERIA[i.criterion][0] for i in cleaned if i.score is not None) / weight * 100) if weight else None
+    scored = {i.criterion: i.score for i in cleaned}
+    signal = 'undetermined'
+    reason = '근거 부족 또는 긍정·부정 신호 혼재: 추가 실사 필요'
+    if weight >= 50:
+        if total >= 70 and (scored['technology'] or 0) >= 3 and (scored['traction'] or 0) >= 3:
+            signal, reason = 'positive', '평가 가능한 범위에서 기술과 사업 성과에 긍정 신호'
+        elif total < 45 and sum(i.score is not None and i.score <= 2 and
+                any(evidence[eid].stance == 'contradict' for eid in i.evidence_ids) for i in cleaned) >= 2:
+            signal, reason = 'concern', '평가 가능한 범위에서 복수 항목의 부정 근거 확인'
+    else:
+        reason = '평가 가능한 가중치가 50% 미만: 기업 실패로 판정하지 않음'
+    assessment = BusinessAssessment(observed_score=round(total, 1) if total is not None else None,
+                                    coverage_percent=weight, signal=signal, reason=reason)
+    return report.model_copy(update={'business_scores': cleaned, 'business_assessment': assessment, 'references': refs})
+
+
+def business_score_table(report):
+    from skala_rag.agents.decision_agents.decision import CRITERIA
+    a = report.business_assessment
+    if a is None:
+        return ''
+    labels = {'positive': '긍정 신호', 'concern': '사업성 우려', 'undetermined': '판단 유보'}
+    score = f'{a.observed_score:g}/100' if a.observed_score is not None else '미평가'
+    lines = ['**사업성 평가: ' + labels[a.signal] + '**',
+        f'관측 점수: {score} / 근거 커버리지: {a.coverage_percent:g}% (미평가 항목 제외)',
+        '| 평가 항목 | 가중치 | 점수 | 근거 및 한계 |', '|---|---:|---:|---|']
+    for item in report.business_scores:
+        weight, title = CRITERIA[item.criterion]
+        value = str(item.score) if item.score is not None else '미평가'
+        text = item.rationale.replace('|', '/').replace('\n', ' ')
+        if item.evidence_ids:
+            text += ' [' + ', '.join(item.evidence_ids) + ']'
+        lines.append(f'| {title} | {weight} | {value} | {text} |')
+    lines += [a.reason, '이 분류는 현재 근거의 사업성 신호이며 실제 성공·실패나 투자 추천을 확정하지 않습니다.']
+    return '\n\n'.join(lines[:2]) + '\n\n' + '\n'.join(lines[2:-2]) + '\n\n' + '\n\n'.join(lines[-2:]) + '\n\n'
+
+
+def normalize_uncited_sections(payload):
+    """Uncited output is not a publishable fact; record a gap, never fake an ID."""
+    import copy
+    output = copy.deepcopy(payload)
+    for section in output.get('sections', []):
+        cited = []
+        for claim in section.get('findings', []):
+            if claim.get('evidence_ids'):
+                cited.append(claim)
+            else:
+                # Do not repeat potentially invented uncited text even as a gap.
+                section.setdefault('missing_facts', []).append({'field': section['key'],
+                    'reason': '검증 가능한 출처가 연결되지 않아 이 항목의 사실 판단을 유보합니다. 관련 원문·공시·고객 자료를 추가 확인해야 합니다.'})
+        section['findings'] = cited
+    return output

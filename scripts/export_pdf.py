@@ -4,8 +4,8 @@
     PYTHONPATH=src:. python scripts/export_pdf.py storage/reports/robros_2026-09-30.md
 
 두 가지 레이아웃으로 만들어 장수를 비교한다.
-    continuous : 내용을 이어서 배치 → 보고서 전체가 5페이지 안에 들어가는지
-    per-page   : 설계서의 PAGE 1~5(--- 구분)마다 새 페이지 → 각 설계 페이지가 한 장에 들어가는지
+    continuous : 내용을 이어서 배치 → 보고서 전체가 10페이지 안에 들어가는지
+    per-page   : 설계서의 PAGE 1~10(--- 구분)마다 새 페이지 → 각 설계 페이지가 한 장에 들어가는지
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 import markdown
 from pypdf import PdfReader
 
-PAGE_LIMIT = 5
+PAGE_LIMIT = 10
 
 CSS = """
 @page { size: A4; margin: 16mm 15mm; }
@@ -86,7 +86,7 @@ def main() -> None:
     cont, per = res["continuous"][1], res["per-page"][1]
     print(f"이어서 배치: {cont}쪽 → {res['continuous'][0]}")
     print(f"설계 페이지별 배치: {per}쪽 → {res['per-page'][0]}")
-    print(f"판정: 5페이지 제한 {'충족' if cont <= PAGE_LIMIT else '초과'}"
+    print(f"판정: 10페이지 제한 {'충족' if cont <= PAGE_LIMIT else '초과'}"
           + ("" if per <= PAGE_LIMIT else f" (설계 PAGE 중 {per - PAGE_LIMIT}쪽이 한 장을 넘침)"))
 
 

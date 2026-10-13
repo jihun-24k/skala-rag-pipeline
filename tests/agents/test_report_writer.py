@@ -265,7 +265,7 @@ def test_evaluation_writer_supplies_full_evidence_and_rewrite_instructions():
     calls = []
     def generate(schema, instruction, payload):
         calls.append((instruction, payload))
-        assert schema is EvaluationReport
+        assert issubclass(schema, EvaluationReport)
         return payload['draft']
 
     report = build_evaluation_report(state, ['무게의 상충을 설명'], generate)
@@ -287,7 +287,8 @@ def test_evaluation_body_exposes_missing_fact_searches_and_preserves_headings(tm
     report = build_evaluation_report(evaluation_state(), [])
     text = render_evaluation_perspective(report.perspectives[0])
     assert '확인한 자료: 개발자 문서' in text
-    assert '조사한 질문: 로브로스 장기 가동률' in text
+    assert '조사한 질문:' not in text
+    assert report.perspectives[0].missing_facts[0].attempted_queries == ['로브로스 장기 가동률']
     markdown = render_evaluation_markdown(report)
     assert markdown.startswith('# 로브로스 평가 보고서') and '## 14. REFERENCE' in markdown
     pdf = render_evaluation_pdf(report, tmp_path / 'evaluation.pdf')
@@ -346,3 +347,39 @@ def test_classification_is_preserved_even_when_writer_omits_it():
     assert report.classification['산업 / 세부 산업'] == '로봇 / 휴머노이드'
     assert '잘못된 모델 분류' not in markdown
     assert markdown.index('2. INVESTMENT SNAPSHOT') < markdown.index('기업 분류') < markdown.index('3. BUSINESS IDEA')
+
+
+def test_business_rubric_separates_missing_positive_and_negative():
+    from skala_rag.models.orchestration import EvaluationReport, BusinessScore
+    from skala_rag.agents.report import assess_business_report
+    from skala_rag.models import Evidence
+    keys = ['team','market','technology','traction','moat','scalability']
+    def assess(scores, stance='support'):
+        evidence = {key: Evidence(evidence_id=key, claim_text='fixture', stance=stance,
+            source_type='regulatory', source_grade='A', source_uri='https://example.test/'+key,
+            independent=True, value=100) for key in keys}
+        report = EvaluationReport(summary='fixture', perspectives=[], analysis_revision=1,
+            business_scores=[BusinessScore(criterion=key, score=score, rationale='fixture',
+                evidence_ids=[key] if score is not None else []) for key, score in zip(keys, scores)])
+        return assess_business_report(report,evidence)
+    positive = assess([4,4,4,4,None,None])
+    assert positive.business_assessment.signal == 'positive'
+    assert positive.business_assessment.coverage_percent == 75
+    assert positive.business_assessment.observed_score == 80
+    unknown = assess([None,None,4,None,None,None])
+    assert unknown.business_assessment.signal == 'undetermined'
+    assert unknown.business_assessment.coverage_percent == 25
+    negative = assess([2,2,1,1,2,2], 'contradict')
+    assert negative.business_assessment.signal == 'concern'
+    assert assess([2,2,1,1,2,2]).business_assessment.signal == 'undetermined'
+    assert assess([None]*6).business_assessment.observed_score is None
+
+
+def test_uncited_section_output_is_a_gap_not_a_fact_or_fake_citation():
+    from skala_rag.agents.report import normalize_uncited_sections
+    payload = {'sections':[{'key':'financials','findings':[{'text':'매출 999억 원','evidence_ids':[]}]}]}
+    result = normalize_uncited_sections(payload)
+    assert result['sections'][0]['findings'] == []
+    assert result['sections'][0]['missing_facts']
+    assert '999' not in str(result)
+    assert payload['sections'][0]['findings']  # no mutation

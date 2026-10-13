@@ -28,7 +28,7 @@
 | 식별/입력 | run/thread/trace ID, 스키마·설정·자료 버전, 입력 지문으로 재개 호환성 검사 |
 | 현재 산출물 | 기업·분류, `perspectives`, 활성 `evidence`/ID, 평가 정리, 보고서, 품질 verdict |
 | 작업 제어 | 요청·결과, 처리된 키, task 상태, `next_action`, agent별 attempts, 무진행 agent |
-| 반복 예산 | step/Supervisor 횟수와 검증된 `limits`; 각 연구 최대 3회, F/G 각 최대 3회, Supervisor 20회, 전체 60회, 오류 6회 기본값 |
+| 반복 예산 | step/Supervisor 횟수와 검증된 `limits`; 각 연구 최대 2회, F/G 각 최대 2회, Supervisor 12회, 전체 40회, 오류 4회 기본값 |
 | Error-aware | 실행 `status`, 누적 `error_count`, `last_error`, 미해결 `task_errors`, task별 `retry_counts` |
 | 유효성 | `analysis_revision`, `report_revision`으로 이전 분석의 정리·보고서·평가 사용 방지; `research_sufficient`로 현재 분석의 충분성 판단 보존 |
 
@@ -46,7 +46,7 @@ G는 필수 품질 항목 `groundedness`, `neutrality`, `bias`와 별도 형식 
 
 `passed`는 현재 보고서·verdict의 세 품질 기준 및 형식 검사 통과와 미해결 오류 없음일 때만 허용한다. Supervisor의 충분성 모델이 현재 분석을 불충분하다고 판단하면 `research_sufficient=False`로 보존하고 품질 Judge의 통과로 뒤집지 않는다. 새 연구 결과로 분석 버전이 바뀌면 충분성 판단을 초기화하고 다시 평가한다. 부족한 근거·의미 평가 미확인·재작업 상한은 `incomplete`, 필수 실행 실패는 `failed`다. 동일 연구 결과가 반복되면 무진행으로 표시해 같은 조사 반복을 중지한다. CLI 중단은 가능한 결과 파일에 `interrupted`로 기록하고 마지막 정상 체크포인트를 보존한다.
 
-CLI는 모든 실행의 입력·결과 JSON·이벤트·SQLite 체크포인트를 보존한다. Markdown 및 선택적 PDF는 passed 상태이고 최종 렌더가 10쪽 이내일 때만 발행한다. --no-pdf도 평가 및 최종 쪽수 검사를 수행한다. 재개는 동일 UUID와 입력·설정·자료 SHA-256 지문을 요구한다. State schema v2와 CLI 설정 `report_contract=assignment-v3`를 사용한다. 이전 계약의 체크포인트는 최종 발행·분류·재무 차트 계약과 호환되지 않으므로 새 실행을 시작한다. 저수준 Python 재개 호출자도 v1 체크포인트를 재사용하지 않아야 한다. FAISS 체크섬 검사와 manifest 내용, 기업 마스터·실제 로드 문서까지 지문에 포함한다. 완료 task를 재사용하지만 중단 당시 완료 여부를 확인하지 못한 외부 호출의 정확히 한 번 실행은 보장하지 않는다. 강제 종료·reducer/DB/저장 오류는 일반 노드 오류처럼 항상 State에 넣을 수 없으므로 실행 경계와 마지막 정상 체크포인트를 확인한다.
+CLI는 모든 실행의 입력·결과 JSON·이벤트·SQLite 체크포인트를 보존한다. Markdown 및 선택적 PDF는 passed 상태이고 최종 렌더가 10쪽 이내일 때만 발행한다. --no-pdf도 평가 및 최종 쪽수 검사를 수행한다. 재개는 동일 UUID와 입력·설정·자료 SHA-256 지문을 요구한다. State schema v2와 CLI 설정 `report_contract=assignment-v4`를 사용한다. 이전 계약의 체크포인트는 최종 발행·분류·재무 차트 계약과 호환되지 않으므로 새 실행을 시작한다. 저수준 Python 재개 호출자도 v1 체크포인트를 재사용하지 않아야 한다. FAISS 체크섬 검사와 manifest 내용, 기업 마스터·실제 로드 문서까지 지문에 포함한다. 완료 task를 재사용하지만 중단 당시 완료 여부를 확인하지 못한 외부 호출의 정확히 한 번 실행은 보장하지 않는다. 강제 종료·reducer/DB/저장 오류는 일반 노드 오류처럼 항상 State에 넣을 수 없으므로 실행 경계와 마지막 정상 체크포인트를 확인한다.
 
 LangSmith는 `--langsmith`와 `LANGSMITH_API_KEY`로 명시 활성화한다. 프로젝트는 CLI 옵션 또는 `LANGSMITH_PROJECT`, 기본 `skala-supervisor`다. 루트/하위 노드에 같은 trace ID를 연결하고 재개는 기존 원격 루트의 dotted order를 재사용한다. 허용된 제어 메타데이터와 근거 ID만 전송하며 원문·query·State·모델 prompt는 자동 tracing을 끄고 제외한다. 인증 필드·키 문자열을 가리고 외부 예외 body는 저장하지 않는다. 원격 오류는 로컬 `tracing` 이벤트와 최종 `delivery_status=failed`에 남긴다. `submitted`는 SDK 호출·flush 성공을 의미하며 대시보드 검토·제출 캡처를 대신하지 않는다. 분석 상태와 전송 상태는 분리한다.
 
@@ -179,3 +179,21 @@ make_decision = partial(decision_node, score=propose_scores)
 `EvaluationReport.classification`은 CompanyProfile/MarketCategory에서 결정적으로 생성하여 snapshot에 표시한다. G는 현재 State의 분류와 일치하는지 검사한다. `Evidence.financial_observation`은 연간 결산일·지표·단위·연결범위이며 D의 공시 당기/전기 값에 붙는다. `financial_charts`는 이 메타데이터가 있는 활성 근거에서만 구성하고 G가 값/출처/기간 일치를 재검증한다. 시계열은 동일 기업·지표·단위·연결범위·결산 월일의 최소 두 기간을 요구한다. 결측은 0으로 대체하지 않으며 모델 생성 차트는 채택하지 않는다. 경쟁사 비교는 현재 기업별 근거 계약을 우회해 섞지 않고 제외한다. PDF 그래프와 수치표 모두 10쪽 상한에 포함된다.
 
 최종 저장 직전 PDF가 10쪽을 초과해도 format 실패(실제 쪽수·축약 질문)를 현재 보고서 버전에 기록하고 동일 체크포인트에서 Supervisor → F → G로 복귀한다. 기존 attempts/step 예산을 초기화하지 않으며, 상한 소진 때만 incomplete로 종료한다.
+
+### 실제 생성 실행의 역할·근거 제약
+
+Supervisor 조사 래퍼의 구조화 출력은 작업자별 허용 관점과 해당 작업이 확보한 evidence ID로 스키마를 제한한다. 기존 범위·인용 검증도 유지한다. 충분성 모델에는 사용자 요청과 기업 정보를 함께 전달하며, 전체 목차의 정보 완비가 아니라 요청에 맞는 근거 기반 보고서 작성 가능성을 판단한다. 미확인 재무·시장 규모·인허가는 그 정보를 요구하는 결론을 제외하고 MissingFact로 표시할 수 있으나, 핵심 주장의 근거 부족은 계속 작성 차단 사유다.
+
+보고서 모델 호출은 가변 키를 갖는 references/classification/reference_details 딕셔너리를 API 전송 시 key/value 목록으로 바꾸고 strict JSON schema로 생성한다. 응답을 원래 딕셔너리로 복원한 뒤 기존 EvaluationReport Pydantic 계약으로 검증한다. 연구·충분성·평가의 고정 구조화 출력은 기존 방식과 계약 검증을 유지한다. API 엄격 스키마가 지원하지 않는 가변 객체를 통과시키기 위해 계약 검증을 생략하지 않는다.
+
+### 미평가 허용 사업성 계약
+
+EvaluationReport.business_scores는 여섯 항목의 1~5 또는 null 점수·이유·근거 ID이며, business_assessment는 코드가 계산한 관측 점수·커버리지·사업성 신호다. G는 재계산값과 일치를 검사한다. 미평가를 0/1점으로 채우지 않으며 원래 실패 판정 규칙을 현재 보고서의 발행 여부에 적용하지 않는다. 자세한 가중치·초기 임계값·예산은 README의 사업성·보고서 평가 기준 재설계를 따른다.
+
+작성 중 출처 ID가 비어 있는 문장은 사실로 발행하지 않고 MissingFact로 전환하며, 해당 미인용 문장의 수치·주장을 보고서에 반복하지 않는다. 미평가 항목은 허용하지만 인용 없는 사실을 허용하는 것은 아니다.
+
+보고서 F는 검색된 활성 evidence ID만 인용 필드에서 선택하도록 생성 스키마를 제한한다. G의 출처 수·도메인·stance 검사는 편중 위험 신호이며 단독으로 실패를 확정하지 않는다. 의미 평가가 출처 의존성 공개, 주장 범위, 불리한 근거 누락을 확인한다. 모델 미설정 시 unknown을 유지한다. 미등록 인용·출처 불일치는 계속 코드에서 실패 처리한다.
+
+Supervisor 검색은 동일한 검증 원문의 벡터 검색과 BM25 결과를 교대로 결합해 질의별 limit 안에서 사용한다. 정확한 제품명 검색이 특허 벡터 결과에 밀리는 현상을 줄이며 날짜·회사·출처 필터는 두 검색에 동일하게 적용한다. 기존 analyze 검색 동작은 유지한다.
+
+모델 설정 시 최초 조사도 Supervisor가 요청과 수집 상태에 따라 미조사 B/C/D의 부분집합을 선택한다. 각 담당의 최초 자료 가용성 확인은 필수이나 순서는 고정하지 않는다. 중복/기방문 대상은 코드에서 거부하며 오류·재작업·종료 가드는 우선 적용한다. 모델 미설정 모드에는 기존 결정론적 진단 정책을 둔다.

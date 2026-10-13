@@ -204,7 +204,7 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     limits = Limits(max_attempts_per_agent=args.max_attempts,
         max_report_attempts=args.max_report_attempts, max_errors=args.max_errors,
         max_steps=args.max_steps, max_supervisor_steps=args.max_supervisor_steps)
-    configuration = {'report_contract': 'assignment-v3',
+    configuration = {'report_contract': 'assignment-v4',
         'retriever': args.retriever, 'model': args.model, 'judge_model': args.judge_model,
         'financial_api': args.financial_api, 'research_root': str(args.research_root.resolve()) if args.research_root else None,
         'index': str(args.index.resolve()) if args.retriever == 'faiss' else None,
@@ -214,6 +214,9 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
     recorder = TraceRecorder(run_id, run_dir / 'events.jsonl', enabled=args.langsmith,
                              project=args.langsmith_project)
     model = judge_model = None
+    if not args.model and not args.judge_model:
+        print('검색·연결 점검 모드: 생성/의미 평가 모델이 없어 최종 보고서는 발행되지 않습니다. '
+              '보고서 생성에는 --model과 해당 모델의 API 설정이 필요합니다.')
     if args.model or args.judge_model:
         from langchain_openai import ChatOpenAI
         if args.model:
@@ -324,6 +327,16 @@ def _orchestrate_command(args: argparse.Namespace) -> int:
                           'delivery_status': recorder.delivery_status}
     (run_dir / 'result.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'{run_id}: {result["status"]} → {run_dir}')
+    if result['status'] != 'passed':
+        print('최종 보고서 미발행 사유: ' + (result.get('termination_reason') or '실행 결과 확인 필요'))
+        quality = result.get('quality_result')
+        if quality:
+            for item in quality.items:
+                if item.verdict != 'pass':
+                    print(f'  {item.criterion}: {item.verdict} - {item.reason}')
+        for error in result.get('task_errors', {}).values():
+            print(f'  작업 {error.node}: {error.type} - {error.message}')
+        print(f'상세 결과: {run_dir / "result.json"}')
     if recorder.remote_errors:
         print('LangSmith 전송 실패: events.jsonl의 tracing 오류를 확인하세요.')
     return 0 if result['status'] == 'passed' and not recorder.remote_errors else 2
@@ -365,11 +378,11 @@ def _parser(prog: str = 'skala-rag') -> argparse.ArgumentParser:
     orchestrate.add_argument('--langsmith', action='store_true', help='Export redacted node spans; requires LANGSMITH_API_KEY')
     orchestrate.add_argument('--langsmith-project', default=None)
     orchestrate.add_argument('--no-pdf', action='store_true')
-    orchestrate.add_argument('--max-attempts', type=int, default=3)
-    orchestrate.add_argument('--max-report-attempts', type=int, default=3)
-    orchestrate.add_argument('--max-errors', type=int, default=6)
-    orchestrate.add_argument('--max-steps', type=int, default=60)
-    orchestrate.add_argument('--max-supervisor-steps', type=int, default=20)
+    orchestrate.add_argument('--max-attempts', type=int, default=2)
+    orchestrate.add_argument('--max-report-attempts', type=int, default=2)
+    orchestrate.add_argument('--max-errors', type=int, default=4)
+    orchestrate.add_argument('--max-steps', type=int, default=40)
+    orchestrate.add_argument('--max-supervisor-steps', type=int, default=12)
     orchestrate.set_defaults(handler=_orchestrate_command)
 
     report = commands.add_parser('report', help='Render a saved analysis JSON to PDF or Markdown')

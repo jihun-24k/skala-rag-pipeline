@@ -56,9 +56,15 @@ def error_info(node, task_id, attempt, exc) -> ErrorInfo:
     status_code = getattr(exc, 'status_code', None)
     if isinstance(status_code, int) and (status_code == 429 or status_code >= 500):
         retryable = True
+    message = '일시적 외부 호출 실패' if retryable else '작업 실행 또는 출력 계약 검증 실패'
+    if name == 'ValidationError' and hasattr(exc, 'errors'):
+        # Field paths/types only; never echo input values or model/source text.
+        failures = exc.errors(include_input=False, include_url=False)[:5]
+        message += ': ' + '; '.join('.'.join(str(part)[:50] for part in err['loc']) +
+                                   ' (' + err['type'] + ')' for err in failures)
     return ErrorInfo(error_id=f'{task_id}:{attempt}:{name}', node=node, task_id=task_id,
         attempt=attempt, type=name, retryable=retryable,
-        message='일시적 외부 호출 실패' if retryable else '작업 실행 또는 출력 계약 검증 실패')
+        message=message)
 
 
 def build_supervisor_graph(agents: OrchestrationAgents, *, checkpointer=None, recorder=None, interrupt_after=None):

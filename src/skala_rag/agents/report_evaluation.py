@@ -27,12 +27,18 @@ class ReportEvaluator:
         no_claims = not claims
         unused_refs = report.references.keys() - ids
         summary_only = summary_ids - body_ids
-        from skala_rag.agents.report import attach_financial_charts
+        from skala_rag.agents.report import attach_financial_charts, assess_business_report
         expected_charts = attach_financial_charts(report, evidence).financial_charts
         invalid_charts = report.financial_charts != expected_charts
-        grounded = 'fail' if invalid_charts or bad_ids or bad_refs or bad_urls or no_claims or unused_refs or summary_only else 'pass'
+        expected_business = assess_business_report(report, evidence)
+        invalid_business = (report.business_scores != expected_business.business_scores or
+                            report.business_assessment != expected_business.business_assessment)
+        grounded = 'fail' if invalid_business or invalid_charts or bad_ids or bad_refs or bad_urls or no_claims or unused_refs or summary_only else 'pass'
         items = [QualityItem(criterion='groundedness', verdict=grounded,
-            reason='근거·REFERENCE 불일치, 미사용 참고문헌, SUMMARY의 본문 외 인용 또는 분석 내용 없음' if grounded == 'fail'
+            reason=('근거 연결 오류: 미등록 ID=' + str(sorted(bad_ids)) + '; 참고문헌 누락=' + str(sorted(bad_refs))
+                    + '; URL 불일치=' + str(bad_urls) + '; 미사용 참고문헌=' + str(sorted(unused_refs))
+                    + '; SUMMARY 전용 ID=' + str(sorted(summary_only))
+                    + f'; 분석 없음={no_claims}; 차트 불일치={invalid_charts}; 점수 불일치={invalid_business}') if grounded == 'fail'
                 else '주장의 모든 ID와 REFERENCE 연결 확인', target='F' if grounded == 'fail' else None)]
         text = report.summary + '\n' + '\n'.join(c.text for c in claims)
         recommended = bool(re.search(r'(투자를?\s*추천|구매를?\s*추천|최고의\s*기술|무조건\s*우수)', text))
@@ -45,8 +51,8 @@ class ReportEvaluator:
         independent = any(evidence[eid].independent is True for eid in ids & evidence.keys())
         balanced = any(evidence[eid].stance in ('contradict', 'unknown') for eid in ids & evidence.keys())
         biased = len(sources) < 2 or len(domains) < 2 or not balanced
-        items.append(QualityItem(criterion='bias', verdict='fail' if biased else 'pass' if independent else 'unknown',
-            reason='독립 출처·반대/불확실 근거 추가 조사 필요' if biased else
+        items.append(QualityItem(criterion='bias', verdict='unknown' if biased or not independent else 'pass',
+            reason='출처 편중 신호: 한계 공개와 불리한 근거 누락 여부의 의미 검증 필요' if biased else
                 '출처 분산과 반대/불확실 근거 확인' if independent else '출처 독립성의 의미 검증 필요',
             target='C' if biased else None,
             questions=['기업 발표와 독립적인 출처 및 불리한 근거를 추가 조사하세요.'] if biased else []))
@@ -84,5 +90,7 @@ class ReportEvaluator:
             merged = []
             for item in semantic.items:
                 rule = rules[item.criterion]
-                merged.append(rule if rule.verdict == 'fail' else item)
+                # Format is measured from the actual renderer; the semantic
+                # judge must not mistake JSON sections 2-13 for missing 1/14.
+                merged.append(rule if rule.verdict == 'fail' or item.criterion == 'format' else item)
         return QualityVerdict(items=merged, report_revision=state['report_revision'])

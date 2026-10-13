@@ -15,7 +15,7 @@
 
 - **Objective:** 하나의 기업·기술을 복수 관점에서 평가하고, 출처·조건·한계를 확인할 수 있는 보고서를 작성합니다.
 - **Pattern:** Supervisor — 조사 역할이 정해진 기존 에이전트 중에서 현재 부족한 관점을 담당하는 에이전트를 선택하고 재호출하기에 적합합니다.
-- **동적 처리:** 고정된 순서로 모든 단계를 반복하지 않습니다. 시장 근거가 부족하면 C만 재조사하고, 인용·표현 문제는 F만 수정한 뒤 G가 다시 평가합니다. 기업 분류가 미확정이면 B/C/D 조사를 생략하고 제한 보고를 작성합니다.
+- **동적 처리:** 고정된 순서로 모든 단계를 반복하지 않습니다. 시장 근거가 부족하면 C만 재조사하고, 인용·표현 문제는 F만 수정한 뒤 G가 다시 평가합니다. 기업 분류가 미확정이면 B/C/D 조사와 최종 보고서 발행을 보류합니다.
 - **평가 원칙:** 과제 경로에서는 기술 우열·투자·구매를 추천하지 않습니다. 확인되지 않은 사실은 `MissingFact`, 검증하지 못한 품질 기준은 `unknown`으로 남깁니다.
 
 ## Selected Technologies
@@ -58,6 +58,8 @@
 
 작업자는 `TaskRequest`와 State 스냅샷을 받고 결과를 반환합니다. 서로 직접 호출하지 않으며, 모든 작업 선택은 Supervisor를 거칩니다. 기존 `analyze` 경로의 E 투자 판단과 과제 경로의 E 평가 정리는 별도 계약입니다.
 
+## Contributors
+
 기존 모듈 기여자는 다음과 같습니다. 실제 협업 작업 범위는 [AGENTS.md](AGENTS.md)에 따라 개별 작업에서 할당합니다.
 
 | 이름 | 기존 담당 영역 |
@@ -77,7 +79,7 @@
 - **상관:** `run_id`/`thread_id`/`trace_id`를 같은 UUID로 연결합니다. 안정된 task ID와 attempt로 결과·오류·trace를 연결하고, 분석·보고서 revision으로 오래된 결과를 구분합니다. 오류·작업 시작·완료 시각은 timezone-aware UTC입니다.
 - **재개/복구:** SQLite에 체크포인트를 저장하고 동일 UUID·입력·자료·설정 지문으로 재개합니다. 완료 결과를 재사용하지만 중단 당시 완료 여부를 알 수 없는 외부 호출은 다시 실행될 수 있습니다.
 - **동시 처리:** 선택된 독립 조사 작업을 병렬 실행합니다. 작업자는 `task_results`만 쓰고 reducer가 task/attempt 키로 병합하며 동일 키의 다른 결과는 거부합니다. 수집 노드가 활성 근거·분석·오류를 합친 뒤 Supervisor로 돌아갑니다.
-- **종료 보장:** 연구별 최대 3회, F/G 각각 최대 3회, Supervisor 최대 20회, 전체 최대 60회, 오류 최대 6회가 기본 상한입니다. 무진행 감지와 graph recursion limit도 적용합니다. 충분성 미충족·미해결 오류·품질 `unknown`은 `passed`로 처리하지 않습니다.
+- **종료 보장:** 연구별 최대 2회, F/G 각각 최대 2회, Supervisor 최대 12회, 전체 최대 40회, 오류 최대 4회가 기본 상한입니다. 무진행 감지와 graph recursion limit도 적용합니다. 충분성 미충족·미해결 오류·품질 `unknown`은 `passed`로 처리하지 않습니다.
 
 ### 강의 State 예시의 적용 근거
 
@@ -103,7 +105,7 @@
 [^state-size]: 호출 횟수는 제한하지만 직렬화된 State의 바이트 상한까지 보장하지 않습니다. 과거 상세 payload를 외부 저장하고 참조만 남기는 최적화는 아직 적용하지 않았습니다.
 [^state-recovery]: `attempts`는 예약된 전체 시도, `retry_counts`는 오류 재시도 예약을 셉니다. 실제 완료 횟수는 task 결과/트레이스와 대조합니다. 체크포인트 재개 시 중단 당시 완료 여부를 모르는 외부 호출의 정확히 한 번 실행은 보장하지 않습니다.
 [^state-concurrency]: **Orchestrator-Workers를 선택했다면 구조화된 plan과 그 결과에 따라 생성된 dynamic fan-out을 코드·트레이스로 입증해야 합니다.** 이 프로젝트는 Supervisor이므로 해당 패턴의 필수 항목은 비적용입니다. B/C 병렬 실행과 `Send` 사용만으로 Orchestrator의 dynamic fan-out 충족을 주장하지 않습니다.
-[^state-end]: 기본 연구 에이전트별 3회, F/G 각 3회, Supervisor 20회, 전체 60회, 오류 6회입니다. 단계 수를 채웠다고 성공하지 않으며, 실제 PDF 최종 검사에서 재진입해도 예산을 초기화하지 않습니다.
+[^state-end]: 기본 연구 에이전트별 2회, F/G 각 2회, Supervisor 12회, 전체 40회, 오류 4회입니다. 단계 수를 채웠다고 성공하지 않으며, 실제 PDF 최종 검사에서 재진입해도 예산을 초기화하지 않습니다.
 
 ### 제출 트레이스와 코드의 대조
 
@@ -114,41 +116,99 @@
 | 10쪽 초과 재진입 | `publication`의 rework/실제 쪽수 → F → G; 보고서 revision 증가 | `cli.py`, `test_late_pdf_overflow_returns_to_writer_and_judge_before_publication` |
 | 반복 제한 / 성공 구분 | 예산 소진은 incomplete/failed, 품질 통과와 쪽수 충족 후 발행 | 동일 run의 result.json·체크포인트·최종 파일 대조 |
 
-초기 B/C와 D 선택에는 정책상 고정 규칙이 남아 있습니다. 따라서 제출 설명에서는 모든 초기 라우팅을 LLM이 자유롭게 결정한다고 표현하지 않습니다. 실제 실행별 라우팅 수·재작업 수는 해당 제출 트레이스에서 집계하며, 테스트의 호출 횟수를 실제 모델 실행 결과로 대신 쓰지 않습니다.
+모델 설정 시 초기 조사 대상도 요청·현재 State에 따라 선택합니다. 기업 식별 및 필수 자료 가용성 확인, 오류·예산·버전 가드는 코드가 보장합니다. 실제 실행별 라우팅 수·재작업 수는 해당 제출 트레이스에서 집계하며, 테스트의 호출 횟수를 실제 모델 실행 결과로 대신 쓰지 않습니다.
 
 실제 모델·State·reducer·재개 계약은 [인터페이스 계약](docs/contracts.md), 패턴과 단계별 설계 근거는 [구현 설계 20장](docs/implementation-design.md#20-multi-agent-orchestration-단계별-설계)을 따릅니다.
 
 ## Architecture
 
+실제 그래프 연결은 `Supervisor → 선택된 작업자 → collect → Supervisor`입니다. 아래 그림은 한 Supervisor 안의 판단을 단계별로 펼친 설명도이며, 그림의 판단 상자마다 별도 에이전트가 있는 것은 아닙니다. 에이전트가 다른 에이전트를 직접 호출하지 않습니다.
+
+### 1. 보고서 작성·수정·축약 루프
+
 ```mermaid
 flowchart TD
-    startNode([입력 검증]) --> supervisor{Supervisor}
-    supervisor -->|기업 식별| agentA["A 기업·시장 분류"]
-    supervisor -->|선택된 조사·재조사| agentB["B 기술 분석"]
-    supervisor -->|선택된 조사·재조사| agentC["C 시장·이해관계자 분석"]
-    supervisor -->|재무 보완| agentD["D 재무 분석"]
-    supervisor -->|평가 정리| agentE["E 네 관점 정리"]
-    supervisor -->|작성·수정| agentF["F 보고서 생성"]
-    supervisor -->|품질 평가| agentG["G 별도 품질 평가"]
-    agentA --> collectNode[결과 수집·State 갱신]
-    agentB --> collectNode
-    agentC --> collectNode
-    agentD --> collectNode
-    agentE --> collectNode
-    agentF --> collectNode
-    agentG --> collectNode
-    collectNode --> supervisor
-    supervisor -->|품질 통과| pageGate{최종 PDF 10쪽 이내}
-    pageGate -->|통과| outputNode[최종 보고서 저장]
-    pageGate -->|초과: 축약 지시 후 재평가| supervisor
-    supervisor -->|수정 상한 도달| incompleteNode[incomplete 발행 보류]
-    supervisor -->|재작업 소진 또는 복구 불가| incompleteNode
-    incompleteNode --> diagnosticNode[실행 결과·오류·체크포인트만 저장]
-    outputNode --> finishNode([END])
-    diagnosticNode --> finishNode
+    synthesis["E 결과 수집: 최신 평가 정리"] --> writeGate{"Supervisor: F 실행 가능?"}
+    writeGate -->|가능| writer["F: 작성 또는 수정·축약"]
+    writeGate -->|예산 소진| stopReport["incomplete: 발행 보류"]
+    writer --> collectReport["Collect: report 저장 · report_revision 증가 · 이전 평가 폐기"]
+    collectReport --> evalGate{"Supervisor: G 실행 가능?"}
+    evalGate -->|가능| evaluator["G: 근거 연결성·중립성·편향·형식 및 실제 PDF 분량 검사"]
+    evalGate -->|예산 소진| stopReport
+    evaluator --> collectQuality["Collect: 현재 보고서 버전의 quality_result 저장"]
+    collectQuality --> review{"Supervisor: 평가 결과와 재작업 경로 확인"}
+    review -->|내용·인용·목차 문제이며 F 수정 가능| revise["실패 사유와 구체적인 수정 질문 전달"]
+    review -->|10쪽 초과이며 F 수정 가능| shorten["쪽수·축약 지시 전달: 근거·핵심 수치·한계 보존"]
+    revise --> writeGate
+    shorten --> writeGate
+    review -->|근거 문제이며 재조사 가능| research["조사 루프로 이동: 담당 B/C/D 재조사"]
+    research -->|새 근거 반영 후 E 재종합| synthesis
+    review -->|종합 문제이며 E 실행 가능| resynthesize["Supervisor: 충분성 확인 후 E 재정리"]
+    resynthesize --> synthesis
+    review -->|모든 품질·종료 조건 충족| finalRender["CLI: 최종 저장용 PDF 렌더"]
+    finalRender --> pageGate{"전체 10쪽 이내?"}
+    pageGate -->|예| publish["최종 Markdown · 선택적 PDF 저장"]
+    pageGate -->|초과| reenter["format 실패와 실제 쪽수 기록 · 같은 체크포인트로 재진입"]
+    reenter --> review
+    review -->|해결 경로 없음·반복 상한 도달| stopReport
+    stopReport --> diagnostics["result.json · 체크포인트에 초안과 사유 보존"]
 ```
 
-화살표는 허용 경로이며 모든 에이전트를 매번 호출한다는 뜻은 아닙니다. 초기 B/C는 함께 조사할 수 있고, 시장 자료 부족은 C 재조사, 문장·인용 문제는 F 수정 후 G 재평가로 돌아갑니다. 분석 결과가 바뀌면 이전 E/F/G 결과를 무효화합니다.
+- F의 보고서는 초안입니다. 수정할 때마다 `report_revision`을 증가시키고 G의 이전 판정을 폐기합니다.
+- G의 `fail` 또는 담당 작업이 지정된 `unknown`은 재작업 후보입니다. Supervisor가 횟수·오류·무진행 여부를 확인한 뒤 담당자를 선택합니다.
+- 근거 자체가 부족하면 F에게 문장만 바꾸게 하지 않고 B/C/D 조사로 돌아갑니다. 연구가 변경되면 종합·보고서·평가를 초기화하고 E부터 다시 진행합니다.
+- G 검사와 최종 저장 검사 모두 10쪽 초과 시 축약 경로로 돌아갑니다. 분류표·그래프·REFERENCE도 10쪽에 포함됩니다. 동일한 시도·단계 예산을 사용하며 상한을 초기화하지 않습니다.
+- 기본 F/G 각각 최대 2회이며 전체 단계·Supervisor·오류 상한도 적용됩니다. 코드의 필수 실행 오류는 아래 오류 루프에서 처리합니다.
+
+### 2. 조사·근거 보완 루프
+
+```mermaid
+flowchart TD
+    input["기업명 · 요청 · 기준일"] --> classify["Supervisor 선택 → A 기업 식별·분류 → Collect"]
+    classify --> identity{"분류 확정?"}
+    identity -->|아니오| stopResearch["incomplete: 작성 보류"]
+    identity -->|예| initial["Supervisor: 요청·State에 따라 미조사 B/C/D 선택"]
+    initial --> findings["Collect: 관점별 결과·활성 근거 갱신"]
+    findings --> gaps{"Supervisor: 빈 관점·추가 조사 필요?"}
+    gaps -->|담당자와 실행 여유 있음| questions["담당자·질문·선택 사유 지정"]
+    questions --> workers["선택된 B/C/D 실행"]
+    workers --> findings
+    gaps -->|종합 단계 진입 검토| sufficiency{"모델 설정 시: 핵심 근거 충분성 판단"}
+    sufficiency -->|부족하며 새로운 조사 경로 있음| questions
+    sufficiency -->|부족하며 추가 경로 소진| stopResearch
+    sufficiency -->|충분| summary["Supervisor → E 종합 → 보고서 루프"]
+    sufficiency -->|모델 미설정| limited["의미 충분성 미검증 상태로 진행 가능"]
+    limited --> summary
+```
+
+모델을 설정한 실행에서는 Supervisor가 요청·수집된 관점에 따라 미조사 B/C/D 중 다음 담당과 병렬 묶음을 선택합니다. 기업 식별과 각 담당의 자료 가용성 확인은 필수이며, 모델 미설정 진단 모드만 B/C 다음 D의 기본 정책을 사용합니다. 재조사에서는 부족한 관점, 요청 질문, 오류, 동일 결과 반복과 시도 예산을 사용합니다. 모델이 없으면 의미적 충분성 검증은 수행되지 않으며, 의미 품질 Judge도 없으면 보고서 품질을 자동 통과시키지 않습니다. 명시적 `research_sufficient=False`는 E/F 진입을 차단합니다.
+
+### 3. 일시적 오류 재시도 루프
+
+```mermaid
+flowchart TD
+    worker["선택된 작업자 실행"] --> outcome{"실행 결과"}
+    outcome -->|정상 반환| collected["Collect: 산출물 반영 · 해당 미해결 오류 제거"]
+    collected --> next["Supervisor: 다음 작업 판단"]
+    outcome -->|예외 발생| error["TaskResult.error → Collect: 오류 상태·누적 횟수 반영"]
+    error --> recovery{"Supervisor: 재시도 가능한 오류이며 예산 남음?"}
+    recovery -->|예| retry["같은 작업 재예약 · attempt와 retry_counts 증가"]
+    retry --> worker
+    recovery -->|아니오| stop["실패·미완료 종료 경로: 최종 발행 차단"]
+    stop --> saved["오류 사유 · 실행 결과 · 체크포인트 보존"]
+```
+
+timeout·연결 오류·429·5xx는 제한 내 재시도합니다. 인증·계약·프로그래밍 오류는 같은 작업을 무조건 반복하지 않습니다. 자료 부족은 정상 반환된 `insufficient`/`unavailable`일 수 있으므로 실행 예외와 구분하며, 조사 루프에서 판단합니다. 성공 후에도 `last_error` 기록은 남을 수 있고, 현재 해결 여부는 `task_errors`로 확인합니다.
+
+### 코드와 트레이스의 연결
+
+| 보고 싶은 흐름 | 실제 코드 | 트레이스 확인 |
+|---|---|---|
+| 대상 선택·재작업 | `agents/supervisor.py`, `runtime.py` | supervisor의 action·targets·reason |
+| 결과 반영·버전 변경 | `graph/supervisor_workflow.py`, `graph/state.py` | 작업 attempt·collect·analysis_revision |
+| 품질평가·형식 실패 | `agents/report_evaluation.py` | G 실행 및 현재 report_revision의 판정 |
+| 최종 PDF 초과 재진입 | `cli.py` | publication rework·실제 pages → Supervisor → F → G |
+
 
 ## Directory Structure
 
@@ -223,11 +283,11 @@ uv run pytest -q
 
 - `python app.py`는 실행 옵션을 보여 줍니다. 저장소의 `.venv`가 있으면 해당 Python으로 실행하므로 시스템 Python과 의존성이 섞이지 않습니다. `--query` 등 옵션을 전달하면 기본 `orchestrate` 경로를 실행하며, `analyze`/`report`/`index` 하위 명령도 그대로 사용할 수 있습니다. `uv run python app.py ...`로도 실행할 수 있습니다.
 - 기본 검색은 지정한 storage에 FAISS 색인이 있으면 FAISS, 없으면 BM25입니다. 의미 모델 없이 실행한 결과는 내용 검증이 완료되지 않아 `incomplete`일 수 있습니다. `--financial-api`는 설정한 재무 API를 활성화합니다.
-- PDF를 만들려면 한글 폰트가 필요하며 `SKALA_PDF_FONT`로 경로를 지정할 수 있습니다. `--no-pdf`는 PDF 생성과 쪽수 검사를 생략합니다.
-- 결과는 `storage/reports/<run_id>/`의 `input.json`, `checkpoints.sqlite3`, `events.jsonl`, `result.json`, `report.md`, 선택적 `report.pdf`에 저장합니다. 보고서가 있더라도 최종 상태는 `result.json`으로 확인합니다.
+- PDF를 만들려면 한글 폰트가 필요하며 `SKALA_PDF_FONT`로 경로를 지정할 수 있습니다. `--no-pdf`는 최종 PDF 파일 저장만 생략하며, 10쪽 분량 검사는 수행합니다.
+- 결과는 `storage/reports/<run_id>/`의 `input.json`, `checkpoints.sqlite3`, `events.jsonl`, `result.json`, `report.md`, 선택적 `report.pdf`에 저장합니다. report.md/report.pdf는 품질 통과 후에만 저장합니다. 미발행 사유는 터미널과 result.json에서 확인합니다.
 - 종료 코드 0은 품질 통과·전송 오류 없음, 2는 미완료/실패/전송 오류, 1은 설정 오류입니다. 분석 상태와 LangSmith 전송 상태는 별도로 기록합니다.
 - 실제 원격 모델 품질·LangSmith 대시보드 표시·제출용 trace 캡처는 별도 실행 검증 대상입니다. 로컬 테스트는 제어 분기·오류 복구·품질 수정·영속 재개를 검증합니다.
-- 보고서 계약 v2 이전 실행은 새 run으로 다시 시작해야 합니다. CLI가 계약 버전을 설정 지문에 넣어 오래된 체크포인트 재개를 차단합니다.
+- 보고서 계약 v3 이전 실행은 새 run으로 다시 시작해야 합니다. CLI가 계약 버전을 설정 지문에 넣어 오래된 체크포인트 재개를 차단합니다.
 - 기존 투자 분석은 `uv run skala-rag analyze --help`를 확인합니다. 개발·협업 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다.
 
 
@@ -263,3 +323,87 @@ python app.py --company 로브로스 \
 현재 작업 기준은 `26_AI_Agent/skala-rag-pipeline`의 `codex/feat-agent-report-integrated` 브랜치입니다. `23_RAG` 사본에서 반영했던 보고서·검색·재무 차트·품질/축약 루프와 State 주석 커밋을 모두 포함합니다. 기존 로컬 storage는 그대로 읽고 Git에는 포함하지 않습니다. `skala-rag-pipeline-1` 및 `ai-service` 안의 저장소는 별도 사본이므로 이 브랜치의 작업 위치로 혼동하지 않습니다.
 
 통합 점검: 최신 소스·테스트·설계 문서는 `02c82ab`와 일치하며, 현재 위치에 맞춰 실행 예시 경로만 갱신했습니다. 로컬 검증에서 FAISS 2,652개 벡터와 체크섬 등 6항목이 통과했습니다. 전체 테스트는 기존 Python 환경을 사용해 110 passed, 1 skipped, 25 subtests passed였습니다. 이 환경에서는 FAISS/PyTorch의 OpenMP 중복 로딩으로 기본 실행이 중단되어 테스트 프로세스에만 `KMP_DUPLICATE_LIB_OK=TRUE`를 적용했습니다. 이는 의존성 충돌의 임시 우회이며 프로젝트 기본 실행 코드에는 넣지 않았습니다. 실제 생성 모델·의미 평가·LangSmith 제출용 실행은 별도 미완료 항목입니다.
+
+
+### 보고서가 생성되지 않을 때
+
+1. 현재 프로젝트 폴더에서 `uv sync --extra llm --group dev`로 의존성을 설치합니다. 다른 사본의 `.venv`나 설치 경로가 이동한 환경을 그대로 사용하지 않습니다.
+2. `python app.py`만 실행하면 도움말입니다. 기업명과 요청을 지정해야 분석이 시작됩니다.
+3. `--model`/`--judge-model` 없이 실행하면 검색 점검 모드이며 의미 품질평가가 미확인으로 남아 최종 보고서를 발행하지 않습니다. `--model`을 지정하면 기본적으로 같은 모델이 의미 평가도 담당합니다.
+4. `.env`를 사용한다면 명시적으로 로드합니다. 예: `uv run --env-file .env python app.py --company 로브로스 --query "로브로스 사업·기술·시장·재무 평가" --storage-root ./storage --model "사용할_모델명"`. `사용할_모델명`은 실제 모델 식별자로 바꿉니다. `.env`에는 모델 제공자의 API 키가 필요하고 검색 근거가 해당 제공자에 전달됩니다.
+5. 실행되지만 PDF가 없으면 출력된 미발행 사유와 `result.json`의 `status`, `termination_reason`, `quality_result`, `task_errors`를 확인합니다. 근거 부족·평가 미통과·상한 도달은 자동으로 성공 처리하지 않습니다.
+
+후속 실행 환경 복구: 현재 AI_Agent 폴더에서 잠금 파일 기준 `uv sync --extra llm --group dev`를 완료했습니다. CLI 테스트는 BM25를 명시해 사용자 로컬 FAISS 인덱스·임베딩 모델을 우발적으로 로딩하지 않도록 수정했습니다. 복구 후 현재 폴더의 `.venv`로 전체 테스트 110 passed, 1 skipped를 OpenMP 우회 환경변수 없이 확인했습니다. 이 결과는 실제 생성 모델의 보고서 품질 통과를 의미하지 않습니다.
+
+
+### 다른 기업의 실제 생성·평가 실행 예시: 위로보틱스
+
+현재 프로젝트 루트에서 `.env`에 `OPENAI_API_KEY`를 설정한 뒤 실행합니다. `.env`는 Git에 올리지 않습니다. 이 실행은 로컬 검색 근거를 OpenAI 생성·평가 모델에 전달하며 API 사용 비용이 발생합니다.
+
+```bash
+uv sync --extra llm --group dev
+uv run --env-file .env python app.py orchestrate \
+  --company 위로보틱스 \
+  --query "위로보틱스의 WIM과 ALLEX를 구분해 사업·제품·기술·시장·경쟁·팀·재무·위험을 평가해줘" \
+  --as-of-date 2026-09-30 \
+  --storage-root ./storage \
+  --model gpt-4.1-mini \
+  --judge-model gpt-4.1-mini \
+  --output storage/reports
+```
+
+기업 마스터에 위로보틱스가 있고 현재 storage의 FAISS·조사 자료 경로가 해석되는 것까지 로컬 검증했습니다. 이 명령의 실제 원격 생성·평가 성공은 아직 검증하지 않았습니다. 출력 run ID의 result.json으로 품질판정과 미발행 사유를 확인합니다. 통과하면 같은 폴더의 report.pdf/report.md가 생성됩니다. 현재 과제에는 `app.py orchestrate`를 사용합니다. `scripts/generate_report.py`는 기존 analyze 경로이며 Supervisor 재작업 과제 실행과 다릅니다.
+
+
+## 사업성·보고서 평가 기준 재설계 (현재 과제)
+
+이전 설계서 5장의 여섯 항목과 가중치는 유지하지만, 재무제표 미확보를 전체 평가 중단 조건으로 쓰지 않습니다. 기존 analyze 경로의 과거 투자 판정은 보존하고 현재 orchestrate 보고서에 별도의 사업성 신호 평가를 붙입니다.
+
+| 항목 | 가중치 | 볼 근거 |
+|---|---:|---|
+| 팀 역량 | 15 | 확인된 관련 경력·연구·실행 이력 |
+| 시장 매력도 | 15 | 고객 문제·도입 수요·적용 범위; TAM 수치는 없어도 됨 |
+| 제품·기술 경쟁력 | 25 | 실제 제품·시험 조건·성숙도·한계 |
+| 시장 검증·사업 성과 | 20 | PoC·유료 도입·반복 구매를 구분 |
+| 지속 가능한 경쟁우위 | 10 | 특허의 권리 범위·제조 노하우·전환 비용 |
+| 확장성·수익성 | 15 | 생산·비용·재무·현금 소진 근거; 미공개는 미평가 |
+
+점수는 1~5 또는 미평가(null)입니다. 1~2는 근거가 있는 부정/취약 신호, 3은 기본 구현·정성적 유용성, 4는 구체적 성과 근거, 5는 독립적인 정량·반복 성과 수준입니다. 정보 부재는 1점으로 대체하지 않습니다. 채점은 모델이 제안하고 코드가 인용·미래 목표 제외·근거 상한을 검증합니다. 특허·논문 존재만으로 유료 고객이나 매출 점수를 부여하지 않습니다.
+
+관측 점수 = Σ(평가한 항목의 점수/5 × 가중치) / Σ(평가한 항목의 가중치) × 100.
+근거 커버리지 = 평가한 항목의 가중치 합(%). 두 값을 함께 표시합니다.
+
+| 결과 | 초기 기준 |
+|---|---|
+| 긍정 신호 | 커버리지 ≥50%, 관측 점수 ≥70, 기술·사업 성과 모두 ≥3 |
+| 사업성 우려 | 커버리지 ≥50%, 관측 점수 <45, 실제 반대 근거를 인용한 2점 이하 항목이 2개 이상 |
+| 판단 유보 | 그 외: 근거 부족·경계 구간·신호 혼재 |
+
+이는 현재 자료의 사업성 신호이고 미래 성공/실패 확정이나 투자 추천이 아닙니다. 초기 임계값은 팀이 사례를 대조해 조정할 수 있습니다. 정보가 적은 기업을 강제로 실패군에 넣지 않습니다. 기업 평가 결과와 파이프라인 status(passed/incomplete/failed)는 별개입니다. 사업성 우려 기업도 정직한 보고서를 쓰면 passed일 수 있습니다.
+
+보고서 작성 허용은 기업 동일성과 제품 구분·핵심 주장을 설명할 근거가 있는지로 판단합니다. 시장규모·재무·팀의 빈 항목은 허용하고, 판단 한계·추가 확인 자료를 해당 목차에 씁니다. 품질평가는 근거 연결성·중립성·편향 통제 3개를 유지하되, 6개 사업성 항목이 전부 채워졌는지 또는 독립 정량 자료가 전부 있는지를 통과 조건으로 삼지 않습니다. 형식은 실제 목차·분류표·SUMMARY 반 페이지·최대 10쪽을 코드로 확인합니다.
+
+새 실행의 기본 상한은 연구자별 최초+추가 조사 합계 2회, F/G 각각 최초+수정/재평가 합계 2회, Supervisor 12회, 전체 40단계, 오류 4회입니다. 의미 충분성 판단에 재무 API 활성화 여부를 전달하고 미활성 D에 반복 수집을 요청하지 않습니다. 기존 체크포인트의 예산은 그대로 보존하며 새 기본 상한으로 바꾸거나 초기화하지 않습니다. 계약 버전은 assignment-v4로 이전 설정과 재개를 혼용하지 않습니다.
+
+새 기준의 실제 검증: 위로보틱스 공개자료 실행(run 6793c9bc-1467-42cb-b578-4db8ee1ee1a3)은 자료·시도 예산을 보존한 작성 API 스키마 수정 후 실제 생성·품질평가를 통과했습니다. A/B/C/D/E 각각 1회, F 2회(첫 호출의 출력 계약 오류 포함), G 1회였습니다. 관측 기술 점수 80/100, 근거 커버리지 25%이므로 기업 결과는 판단 유보입니다. 보고서는 5쪽이며 SUMMARY 반 페이지 검사를 통과했습니다. 재무 API·LangSmith는 활성화하지 않았습니다. 이 실행을 중단 없는 최초 실행 성공이나 모든 기업의 미래 성과 검증으로 표현하지 않습니다. 최신 전체 테스트는 119 passed, 1 skipped입니다.
+
+로브로스 실행에서 발견한 검색·인용 오류를 보완했습니다. Supervisor 검색은 검증 원문의 벡터 검색과 BM25를 함께 사용하고, 기술 에이전트는 원문을 재작성하지 않고 청크를 선택합니다. 보고서 인용은 활성 evidence ID로 제한합니다. 출처 편중은 의미 평가의 검토 대상으로 전달하며, 자료의 한계를 공개한 제한 보고서를 단일 출처라는 이유만으로 차단하지 않습니다.
+
+### 현재 과제 기준 검증 (2026-10-13)
+
+[현재 과제 원문](https://app.notion.com/p/3f8b7788ac2a80f48845e9e9fc755e89)을 기준으로 Supervisor를 선택했습니다. Orchestrator의 plan/dynamic fan-out은 선택하지 않은 패턴의 요구사항입니다. 노션 표에 남아 있는 관점 커버리지는 강의 중 제외 지시를 반영해 품질 통과 기준에서 제외했습니다.
+
+| 요구사항 | 구현·확인 근거 | 상태 |
+|---|---|---|
+| Supervisor 경유 통신 | worker → collect → supervisor, 하위 간 edge 없음 | 구현·테스트 |
+| State 조건 분기 | add_conditional_edges, 모델의 초기 담당 선택, 부족 근거별 재작업 | 구현·테스트; 로브로스 실제 단독 라우팅 호출에서 B만 선택 확인 |
+| 작성 전 충분성 | E 전 근거 충분성 판단, 불충분 시 담당 재조사 | 실제 로브로스 재조사 확인 |
+| State 7개 설계 항목 | State 주석·README 표, reducer·SQLite·run_id·상한 | 구현·테스트; payload byte 상한은 없음 |
+| 생성 후 3개 품질 평가 | G 및 미달 담당 복귀, 수정 후 새 버전 재평가 | 구현·테스트·실제 실행 |
+| 보고서 양식·10쪽 | SUMMARY·기존 목차·REFERENCE, 렌더 분량 검사 | 실제 PDF 확인 |
+| LangSmith 캡처 | 로컬 events.jsonl은 존재, 원격 키 미설정 | 제출 증빙 미완료 |
+| 개인별 기여 | Contributors에 기재, 실제 역할은 팀 최종 확인 필요 | 확인 필요 |
+
+FAISS 무결성은 2,652 vectors 및 체크섬 검사 통과입니다. 무결성과 검색 품질은 다르며, Hit Rate@K/MRR의 정답셋 기반 재측정은 완료하지 않았습니다.
+
+로브로스 예시 실행 `d57b9875-5aad-499a-a328-e566bc70a354`은 B/C 각 2회, F/G 각 2회로 최종 품질 통과 및 5쪽 PDF를 확인했습니다. 첫 자동 평가 후 발행 전 검토에서 출처를 넘어선 투자 단계 표현을 발견하여, 남은 1회 예산 안에서 수정·재평가했습니다. 기술 3/5, 관측 점수 60/100, 커버리지 25%로 판단 유보입니다. 이 보고서는 초기 동적 라우팅 보완 전 실행이며, 보완된 초기 라우팅은 별도 실제 API 호출과 단위 테스트로 검증했습니다. 해당 최신 초기 라우팅을 포함한 전체 LangSmith 제출 트레이스는 아직 없습니다.

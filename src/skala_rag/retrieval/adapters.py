@@ -28,10 +28,12 @@ class FaissMarketRetriever:
     """
 
     def __init__(self, retriever: EvidenceRetriever, documents: list[MarketDocument],
-                 *, fetch_k: int):
+                 *, fetch_k: int, augment_with_lexical: bool = False):
         self.retriever = retriever
         self.documents = documents
         self.fetch_k = fetch_k
+        from skala_rag.agents.market_competition.retrieval import LocalMarketRetriever
+        self.lexical = LocalMarketRetriever(documents) if augment_with_lexical else None
 
     def search(self, query: str, *, scope: str, company_ids: set[str],
                forms: set[str], as_of_date: date, limit: int = 5) -> list[RetrievedChunk]:
@@ -68,4 +70,19 @@ class FaissMarketRetriever:
                 break
             if len(result) >= limit:
                 break
+        if self.lexical is not None:
+            lexical = self.lexical.search(query, scope=scope, company_ids=company_ids,
+                forms=forms, as_of_date=as_of_date, limit=limit)
+            # Interleave verified source lanes so vector dominance cannot hide
+            # exact product names. Preserve source metadata and bound context size.
+            merged, seen_sources = [], set()
+            for index in range(max(len(lexical), len(result))):
+                for lane in (lexical, result):
+                    if index < len(lane):
+                        chunk = lane[index]
+                        key = (chunk.document.document_id, chunk.offset)
+                        if key not in seen_sources:
+                            merged.append(chunk)
+                            seen_sources.add(key)
+            return merged[:limit]
         return result

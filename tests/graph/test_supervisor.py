@@ -96,7 +96,7 @@ def test_cli_saves_report_and_resumes_without_repeating_completed_tasks(tmp_path
     monkeypatch.setattr(documents, 'load_documents', lambda root: [])
     monkeypatch.setattr(runtime, 'build_orchestration_agents', lambda **kwargs: agents)
     run_id = str(uuid4())
-    common = ['orchestrate', '--output', str(tmp_path), '--no-pdf']
+    common = ['orchestrate', '--retriever', 'bm25', '--output', str(tmp_path), '--no-pdf']
     args = _parser().parse_args(common + ['--query', 'fixture', '--run-id', run_id])
     assert _orchestrate_command(args) == 0
     run_dir = tmp_path / run_id
@@ -247,7 +247,13 @@ def test_transient_error_is_kept_in_state_and_cleared_after_recovery():
 
 
 def test_no_progress_and_no_judge_are_not_quality_success():
-    agents, calls = researchers(overrides={'C': lambda task, state: ResearchResult()})
+    def missing_market_judge(task, state):
+        return QualityVerdict(report_revision=state['report_revision'], items=[
+            QualityItem(criterion=k, verdict='fail' if k == 'bias' else 'pass',
+                reason='확인된 시장 반대 근거 누락' if k == 'bias' else 'fixture',
+                target='C' if k == 'bias' else None)
+            for k in ('groundedness', 'neutrality', 'bias', 'format')])
+    agents, calls = researchers(overrides={'C': lambda task, state: ResearchResult(), 'G': missing_market_judge})
     state = run(agents)
     assert state['status'] == 'incomplete'
     assert counts(calls)['C'] == 2  # second identical result stops futile searches
@@ -440,7 +446,7 @@ def test_actionable_unknown_is_researched_then_re_evaluated():
 
 
 @pytest.mark.parametrize('oversized', [False, True])
-def test_cli_never_publishes_unpassed_or_oversized_reports(tmp_path, monkeypatch, oversized):
+def test_cli_never_publishes_unpassed_or_oversized_reports(tmp_path, monkeypatch, oversized, capsys):
     import json
     from uuid import uuid4
     import skala_rag.runtime as runtime
@@ -463,9 +469,12 @@ def test_cli_never_publishes_unpassed_or_oversized_reports(tmp_path, monkeypatch
             return path
         monkeypatch.setattr(pdf_module, 'render_evaluation_pdf', large_pdf)
     run_id = str(uuid4())
-    args = _parser().parse_args(['orchestrate', '--output', str(tmp_path), '--query', 'fixture',
+    args = _parser().parse_args(['orchestrate', '--retriever', 'bm25', '--output', str(tmp_path), '--query', 'fixture',
                                 '--run-id', run_id, '--no-pdf'])
     assert _orchestrate_command(args) == 2
+    output = capsys.readouterr().out
+    assert '최종 보고서 미발행 사유:' in output and '상세 결과:' in output
+    assert '생성/의미 평가 모델이 없어' in output
     directory = tmp_path / run_id
     assert not (directory / 'report.pdf').exists() and not (directory / 'report.md').exists()
     assert json.loads((directory / 'result.json').read_text())['status'] == 'incomplete'
@@ -496,7 +505,7 @@ def test_late_pdf_overflow_returns_to_writer_and_judge_before_publication(tmp_pa
         return path
     monkeypatch.setattr(pdf_module, 'render_evaluation_pdf', render)
     run_id = str(uuid4())
-    args = _parser().parse_args(['orchestrate', '--output', str(tmp_path), '--query', 'fixture', '--run-id', run_id])
+    args = _parser().parse_args(['orchestrate', '--retriever', 'bm25', '--output', str(tmp_path), '--query', 'fixture', '--run-id', run_id])
     assert _orchestrate_command(args) == 0
     assert counts(calls)['F'] == counts(calls)['G'] == 2
     assert counts(calls)['B'] == counts(calls)['C'] == 1
@@ -505,3 +514,31 @@ def test_late_pdf_overflow_returns_to_writer_and_judge_before_publication(tmp_pa
     state = json.loads((directory / 'result.json').read_text())
     assert state['status'] == 'passed' and state['report_revision'] == 2
     assert (directory / 'report.pdf').exists()
+
+
+def test_semantic_judge_cannot_invent_missing_rendered_outline_or_finance_rework():
+    agents, _ = researchers()
+    state = run(agents)
+    verdict = state['quality_result'].model_copy(deep=True)
+    verdict.items[-1] = QualityItem(criterion='format', verdict='fail', target='D',
+                                  reason='JSONにはSUMMARYとREFERENCEがない')
+    checked = ReportEvaluator(lambda *args: verdict)(None, state)
+    item = next(i for i in checked.items if i.criterion == 'format')
+    assert item.verdict == 'pass' and item.target is None
+    assert checked.passed
+
+
+def test_source_concentration_requires_semantic_review_not_automatic_failure():
+    agents, _ = researchers()
+    state = run(agents)
+    state['evidence'] = [e.model_copy(update={'independent': False, 'stance': 'support'})
+                         for e in state['evidence']]
+    without_judge = ReportEvaluator()(None, state)
+    assert next(i for i in without_judge.items if i.criterion == 'bias').verdict == 'unknown'
+    semantic = state['quality_result'].model_copy(deep=True)
+    checked = ReportEvaluator(lambda *args: semantic)(None, state)
+    assert next(i for i in checked.items if i.criterion == 'bias').verdict == 'pass'
+    semantic.items[2] = QualityItem(criterion='bias', verdict='fail', target='F',
+                                  reason='기업 발표를 독립 성과로 과장')
+    checked = ReportEvaluator(lambda *args: semantic)(None, state)
+    assert next(i for i in checked.items if i.criterion == 'bias').verdict == 'fail'

@@ -151,7 +151,7 @@ class SupervisorState(TypedDict, total=False):
     evidence: list[Evidence]  # 해당 분석의 근거 발췌·출처·수치; 전체 원문 파일은 아님.
     active_evidence_ids: list[str]  # 현재 근거 ID; 과거 시도의 대체된 근거와 구분.
     evaluation_summary: EvaluationSummary | None  # E의 종합; 근거 변경 시 None으로 무효화.
-    report: EvaluationReport | None  # F의 초안; 존재만으로 최종 발행을 허용하지 않음.
+    report: EvaluationReport | None  # F의 초안·근거별 사업성 점수·커버리지; 존재만으로 발행 허용 안 함.
     quality_result: QualityVerdict | None  # G의 현재 보고서 판정; 수정 시 이전 판정 폐기.
 
     # 4. 작업 전달: Supervisor 예약 → 작업자 결과 → reducer → collect 순서.
